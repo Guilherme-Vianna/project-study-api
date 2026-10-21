@@ -33,3 +33,17 @@ def test_other_urls(url: str, expected: str) -> None:
 def test_settings_normalize_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", NEON_URL)
     assert Settings().database_url.startswith("postgresql+asyncpg://")
+
+
+def test_settings_ignore_surrounding_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DB_ECHO", "false\r\n")
+    monkeypatch.setenv("DB_POOL_SIZE", " 7\r\n")
+    monkeypatch.setenv("GCS_BUCKET_NAME", " \r\n")
+    monkeypatch.setenv("DATABASE_URL", f"{NEON_URL}\r\n")
+
+    configured = Settings(_env_file=None)
+
+    assert configured.db_echo is False
+    assert configured.db_pool_size == 7
+    assert configured.gcs_bucket_name is None
+    assert configured.database_url.endswith("/neondb?ssl=require")

@@ -12,13 +12,13 @@
 
 School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, Google Cloud Storage, Cloud Run.
 
-- Python 3.14, uv (`package = false`); FastAPI, Pydantic v2, firebase-admin, google-cloud-storage, python-multipart, tzdata
+- Python 3.14, uv (`package = false`), taskipy (`uv run task dev`); FastAPI, Pydantic v2, firebase-admin, google-cloud-storage, python-multipart, tzdata
 - SQLAlchemy 2.0 async + asyncpg, Alembic; primary keys are UUIDv7 via stdlib `uuid.uuid7`
 - Tests: pytest + pytest-asyncio (auto) + httpx against real Postgres (`app_test`); Firebase and GCS are faked
 
 ## Domain rules
 
-- Firebase Auth is the only user source; no users table. Users are referenced by `firebase_uid`.
+- Firebase Auth is the only user source (no users table; referenced by `firebase_uid`). Credentials: `FIREBASE_CREDENTIALS_BASE64` or `GOOGLE_APPLICATION_CREDENTIALS` (path).
 - After login the client calls `GET /api/v1/me` (uid, email, name, fresh role, profile).
 - Role lives in the Firebase claim `role` (`teacher` | `student`); one per user. Registration takes a Postgres advisory
   lock on the uid and checks both profile tables plus the claim. Claim + commit pair in `ProfileService._commit_with_claims`.
@@ -70,6 +70,7 @@ docs/            deployment.md (one-time GCP/GitHub setup)
 
 ## Layer rules
 
+- CORS: `CORS_ORIGINS` (comma-separated, default `*`) feeds `CORSMiddleware` in `create_app`.
 - Endpoints parse input, call a service, map to schemas. All v1 routes need a bearer token.
 - Services own rules, raise `AppError` subclasses (never `HTTPException`) and commit.
 - Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via
@@ -84,7 +85,7 @@ docs/            deployment.md (one-time GCP/GitHub setup)
 docker compose up -d db gcs
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload --port 8080
+uv run task dev
 uv run pytest
 uv run ruff check . && uv run ruff format .
 uv run alembic revision --autogenerate -m "message" && uv run alembic check
@@ -93,7 +94,7 @@ uv run alembic revision --autogenerate -m "message" && uv run alembic check
 ## Deployment
 
 - GitHub Actions: PRs run lint + tests + `alembic check`; pushes to `main` build → Artifact Registry → deploy → smoke
-  test. The app migrates on startup (`app/core/migrations.py`, lifespan; `RUN_MIGRATIONS_ON_STARTUP`). Auth via SA key secret `GCP_CREDENTIALS`; `DATABASE_URL` secret (Neon);
+  test. The app creates the database if missing and migrates on startup (`app/core/migrations.py`, lifespan; `RUN_MIGRATIONS_ON_STARTUP`). Auth via SA key secret `GCP_CREDENTIALS`; `DATABASE_URL` secret (Neon);
   config in `development` environment vars (`docs/deployment.md`). New runtime env vars go into the workflow's jq env file.
 - `DATABASE_URL` accepts provider URLs (`postgresql://…?sslmode=…&channel_binding=…`); `Settings` normalizes for asyncpg.
 - `Dockerfile`: multi-stage uv, `python:3.14-slim`, non-root, `$PORT`; no BuildKit-only features.

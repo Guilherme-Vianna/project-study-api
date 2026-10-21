@@ -110,11 +110,13 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           APP_NAME: ${{ vars.APP_NAME || 'project-study-api' }}
           API_V1_PREFIX: ${{ vars.API_V1_PREFIX || '/api/v1' }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS || '*' }}
           DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE || '5' }}
           DB_MAX_OVERFLOW: ${{ vars.DB_MAX_OVERFLOW || '5' }}
           DB_ECHO: ${{ vars.DB_ECHO || 'false' }}
           RUN_MIGRATIONS_ON_STARTUP: ${{ vars.RUN_MIGRATIONS_ON_STARTUP || 'true' }}
           FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_CREDENTIALS_BASE64: ${{ secrets.FIREBASE_CREDENTIALS_BASE64 }}
           GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
           GCS_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           INVITE_BASE_URL: ${{ vars.INVITE_BASE_URL }}
@@ -125,17 +127,19 @@ jobs:
             --arg ENVIRONMENT development \
             --arg APP_NAME "$APP_NAME" \
             --arg API_V1_PREFIX "$API_V1_PREFIX" \
+            --arg CORS_ORIGINS "$CORS_ORIGINS" \
             --arg DATABASE_URL "$DATABASE_URL" \
             --arg DB_POOL_SIZE "$DB_POOL_SIZE" \
             --arg DB_MAX_OVERFLOW "$DB_MAX_OVERFLOW" \
             --arg DB_ECHO "$DB_ECHO"             --arg RUN_MIGRATIONS_ON_STARTUP "$RUN_MIGRATIONS_ON_STARTUP" \
             --arg FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID" \
+            --arg FIREBASE_CREDENTIALS_BASE64 "$FIREBASE_CREDENTIALS_BASE64" \
             --arg GCS_BUCKET_NAME "$GCS_BUCKET_NAME" \
             --arg GCS_PROJECT_ID "$GCS_PROJECT_ID" \
             --arg INVITE_BASE_URL "$INVITE_BASE_URL" \
             --arg IMAGE_MAX_BYTES "$IMAGE_MAX_BYTES" \
             --arg STUDY_TIMEZONE "$STUDY_TIMEZONE" \
-            '$ARGS.named | with_entries(select(.value != ""))' > "$RUNNER_TEMP/runtime-env.yaml"
+            '$ARGS.named | map_values(gsub("^\\s+|\\s+$"; "")) | with_entries(select(.value != ""))' > "$RUNNER_TEMP/runtime-env.yaml"
 
       - name: Deploy Cloud Run service
         run: |

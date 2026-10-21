@@ -19,7 +19,7 @@ cp .env.example .env
 docker compose up -d db gcs
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload --port 8080
+uv run task dev
 ```
 
 Docs: http://localhost:8080/docs

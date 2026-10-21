@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 import os
 from functools import lru_cache
 from typing import Any
@@ -18,10 +20,16 @@ class FirebaseIdentityProvider:
         project_id: str | None,
         credentials_path: str | None = None,
         emulator_host: str | None = None,
+        credentials_base64: str | None = None,
     ) -> None:
         if emulator_host:
             os.environ["FIREBASE_AUTH_EMULATOR_HOST"] = emulator_host
-        credential = credentials.Certificate(credentials_path) if credentials_path else None
+        credential = None
+        if credentials_base64:
+            info = json.loads(base64.b64decode(credentials_base64))
+            credential = credentials.Certificate(info)
+        elif credentials_path:
+            credential = credentials.Certificate(credentials_path)
         options = {"projectId": project_id} if project_id else None
         try:
             self._app = firebase_admin.get_app()
@@ -64,4 +72,5 @@ def get_identity_provider() -> FirebaseIdentityProvider:
         settings.firebase_project_id,
         settings.google_application_credentials,
         settings.firebase_auth_emulator_host,
+        settings.firebase_credentials_base64,
     )

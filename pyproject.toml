@@ -24,6 +24,7 @@ dev = [
     "pytest-asyncio>=1.2",
     "httpx>=0.28",
     "ruff>=0.14",
+    "taskipy>=1.14.1",
 ]
 
 [tool.uv]
@@ -43,3 +44,6 @@ select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
 
 [tool.ruff.lint.isort]
 known-third-party = ["alembic"]
+
+[tool.taskipy.tasks]
+dev = "uvicorn app.main:app --reload --port 8080"
