@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 5
     db_echo: bool = False
+    run_migrations_on_startup: bool = True
 
     firebase_project_id: str | None = None
     google_application_credentials: str | None = None

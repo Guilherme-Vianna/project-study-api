@@ -4,8 +4,11 @@
 
 1. **test**: `ruff check`, `ruff format --check`, `pytest` against a Postgres service container, then `alembic upgrade head` + `alembic check`.
 2. **deploy** (only `main`, on push or manual run; uses the `development` environment):
-   check configuration → build the image → push to Artifact Registry (tag = commit SHA) → run migrations as the Cloud Run
-   Job `<service>-migrate` → deploy the Cloud Run service → smoke test `GET /health/ready`.
+   check configuration → build the image → push to Artifact Registry (tag = commit SHA) → deploy the Cloud Run service
+   → smoke test `GET /health/ready`.
+
+The application runs `alembic upgrade head` on startup (`RUN_MIGRATIONS_ON_STARTUP`, default `true`). A revision whose
+migration fails never becomes ready, so Cloud Run keeps serving the previous revision.
 
 GitHub authenticates to Google Cloud with a service account JSON key stored in the `GCP_CREDENTIALS` secret.
 The same service account deploys and runs the service. The database is any external PostgreSQL (for example Neon);
@@ -114,6 +117,7 @@ Everything lives in the `development` environment (Settings → Environments →
 | `API_V1_PREFIX` | `/api/v1` | |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `5` | |
 | `DB_ECHO` | `false` | |
+| `RUN_MIGRATIONS_ON_STARTUP` | `true` | |
 | `IMAGE_MAX_BYTES` | `5242880` | |
 | `STUDY_TIMEZONE` | `America/Sao_Paulo` | |
 

@@ -8,10 +8,13 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import engine
 from app.core.exceptions import register_exception_handlers
+from app.core.migrations import run_migrations
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    if settings.run_migrations_on_startup:
+        await run_migrations()
     yield
     await engine.dispose()
 

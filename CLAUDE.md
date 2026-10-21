@@ -92,8 +92,8 @@ uv run alembic revision --autogenerate -m "message" && uv run alembic check
 
 ## Deployment
 
-- GitHub Actions: PRs run lint + tests + `alembic check`; pushes to `main` build → Artifact Registry → migrate (Cloud Run
-  Job `<service>-migrate`) → deploy → smoke test. Auth via SA key secret `GCP_CREDENTIALS`; `DATABASE_URL` secret (Neon);
+- GitHub Actions: PRs run lint + tests + `alembic check`; pushes to `main` build → Artifact Registry → deploy → smoke
+  test. The app migrates on startup (`app/core/migrations.py`, lifespan; `RUN_MIGRATIONS_ON_STARTUP`). Auth via SA key secret `GCP_CREDENTIALS`; `DATABASE_URL` secret (Neon);
   config in `development` environment vars (`docs/deployment.md`). New runtime env vars go into the workflow's jq env file.
 - `DATABASE_URL` accepts provider URLs (`postgresql://…?sslmode=…&channel_binding=…`); `Settings` normalizes for asyncpg.
 - `Dockerfile`: multi-stage uv, `python:3.14-slim`, non-root, `$PORT`; no BuildKit-only features.

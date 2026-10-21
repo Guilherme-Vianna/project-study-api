@@ -156,6 +156,10 @@ uv run ruff format .
 
 ## Migrations
 
+The application applies pending migrations on startup (`alembic upgrade head`), so a new Cloud Run revision only starts
+serving once the schema is up to date; if a migration fails the revision does not start and the previous one keeps
+serving. Set `RUN_MIGRATIONS_ON_STARTUP=false` to disable it.
+
 ```bash
 uv run alembic revision --autogenerate -m "describe change"
 uv run alembic upgrade head
@@ -164,7 +168,7 @@ uv run alembic upgrade head
 ## Deploy to Cloud Run
 
 Deployment is automated by GitHub Actions (`.github/workflows/deploy.yml`): every pull request runs lint, tests and a
-migration check; every push to `main` builds the image, pushes it to Artifact Registry, runs `alembic upgrade head` as a
-Cloud Run Job and deploys the service. It authenticates with a service account key stored in the `GCP_CREDENTIALS` secret.
+migration check; every push to `main` builds the image, pushes it to Artifact Registry and deploys the service, which
+migrates the database on startup. It authenticates with a service account key stored in the `GCP_CREDENTIALS` secret.
 
 One-time Google Cloud and GitHub setup: [docs/deployment.md](docs/deployment.md).

@@ -113,6 +113,7 @@ jobs:
           DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE || '5' }}
           DB_MAX_OVERFLOW: ${{ vars.DB_MAX_OVERFLOW || '5' }}
           DB_ECHO: ${{ vars.DB_ECHO || 'false' }}
+          RUN_MIGRATIONS_ON_STARTUP: ${{ vars.RUN_MIGRATIONS_ON_STARTUP || 'true' }}
           FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
           GCS_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -127,7 +128,7 @@ jobs:
             --arg DATABASE_URL "$DATABASE_URL" \
             --arg DB_POOL_SIZE "$DB_POOL_SIZE" \
             --arg DB_MAX_OVERFLOW "$DB_MAX_OVERFLOW" \
-            --arg DB_ECHO "$DB_ECHO" \
+            --arg DB_ECHO "$DB_ECHO"             --arg RUN_MIGRATIONS_ON_STARTUP "$RUN_MIGRATIONS_ON_STARTUP" \
             --arg FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID" \
             --arg GCS_BUCKET_NAME "$GCS_BUCKET_NAME" \
             --arg GCS_PROJECT_ID "$GCS_PROJECT_ID" \
@@ -135,21 +136,6 @@ jobs:
             --arg IMAGE_MAX_BYTES "$IMAGE_MAX_BYTES" \
             --arg STUDY_TIMEZONE "$STUDY_TIMEZONE" \
             '$ARGS.named | with_entries(select(.value != ""))' > "$RUNNER_TEMP/runtime-env.yaml"
-
-      - name: Run database migrations
-        run: |
-          gcloud run jobs deploy "${{ vars.CLOUD_RUN_SERVICE }}-migrate" \
-            --image "$IMAGE" \
-            --region "${{ vars.GCP_REGION }}" \
-            --service-account "${{ vars.GCP_SERVICE_ACCOUNT }}" \
-            --env-vars-file "$RUNNER_TEMP/runtime-env.yaml" \
-            --command alembic \
-            --args upgrade,head \
-            --max-retries 0 \
-            --task-timeout 600s
-          gcloud run jobs execute "${{ vars.CLOUD_RUN_SERVICE }}-migrate" \
-            --region "${{ vars.GCP_REGION }}" \
-            --wait
 
       - name: Deploy Cloud Run service
         run: |
