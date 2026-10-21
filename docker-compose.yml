@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gcs:
+    image: fsouza/fake-gcs-server:1.52
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443", "-backend", "memory"]
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./docker/gcs:/data:ro
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/app
+      PORT: 8080
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_AUTH_EMULATOR_HOST: ${FIREBASE_AUTH_EMULATOR_HOST:-}
+      GCS_BUCKET_NAME: project-study-images
+      STORAGE_EMULATOR_HOST: http://gcs:4443
+      GCS_PUBLIC_BASE_URL: http://localhost:4443/project-study-images
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      gcs:
+        condition: service_started
+
+volumes:
+  pgdata:

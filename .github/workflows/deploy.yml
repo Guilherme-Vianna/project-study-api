@@ -1,0 +1,116 @@
+name: CI and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/app_test
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Migrations match models
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build and push image
+        run: |
+          gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Run database migrations
+        run: |
+          gcloud run jobs deploy "${{ vars.CLOUD_RUN_SERVICE }}-migrate" \
+            --image "$IMAGE" \
+            --region "${{ vars.GCP_REGION }}" \
+            --service-account "${{ vars.GCP_SERVICE_ACCOUNT }}" \
+            --set-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}" \
+            --set-secrets "DATABASE_URL=${{ vars.DATABASE_URL_SECRET }}:latest" \
+            --command alembic \
+            --args upgrade,head \
+            --max-retries 0 \
+            --task-timeout 600s
+          gcloud run jobs execute "${{ vars.CLOUD_RUN_SERVICE }}-migrate" \
+            --region "${{ vars.GCP_REGION }}" \
+            --wait
+
+      - name: Deploy Cloud Run service
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --image "$IMAGE" \
+            --region "${{ vars.GCP_REGION }}" \
+            --service-account "${{ vars.GCP_SERVICE_ACCOUNT }}" \
+            --add-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}" \
+            --set-secrets "DATABASE_URL=${{ vars.DATABASE_URL_SECRET }}:latest" \
+            --set-env-vars "ENVIRONMENT=production,FIREBASE_PROJECT_ID=${{ vars.FIREBASE_PROJECT_ID }},GCS_BUCKET_NAME=${{ vars.GCS_BUCKET_NAME }},GCS_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},INVITE_BASE_URL=${{ vars.INVITE_BASE_URL }},STUDY_TIMEZONE=America/Sao_Paulo" \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Smoke test
+        run: |
+          url=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" --region "${{ vars.GCP_REGION }}" --format 'value(status.url)')
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$url/health/ready"
