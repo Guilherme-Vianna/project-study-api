@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.core.config import settings
 from app.core.database import get_session
 from app.integrations.firebase import get_identity_provider
 from app.integrations.gcs import get_image_storage
@@ -28,6 +29,13 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def configured_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "gcs_bucket_name", "test-images")
+    monkeypatch.setattr(settings, "gcs_public_base_url", None)
+    monkeypatch.setattr(settings, "invite_base_url", "http://localhost:3000/invites")
 
 
 @pytest.fixture

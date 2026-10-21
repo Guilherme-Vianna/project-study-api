@@ -60,13 +60,36 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: test
     runs-on: ubuntu-latest
-    environment: production
+    environment: development
     concurrency:
-      group: deploy-production
+      group: deploy-development
       cancel-in-progress: false
     env:
       IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GAR_REPOSITORY }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
     steps:
+      - name: Check configuration
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
+          CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: |
+          missing=()
+          for name in GCP_CREDENTIALS DATABASE_URL GCP_PROJECT_ID GCP_REGION GAR_REPOSITORY \
+            CLOUD_RUN_SERVICE GCP_SERVICE_ACCOUNT FIREBASE_PROJECT_ID; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing secrets/variables in the 'development' environment: ${missing[*]}"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - name: Authenticate to Google Cloud
@@ -82,14 +105,44 @@ jobs:
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
 
+      - name: Write runtime environment
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_NAME: ${{ vars.APP_NAME || 'project-study-api' }}
+          API_V1_PREFIX: ${{ vars.API_V1_PREFIX || '/api/v1' }}
+          DB_POOL_SIZE: ${{ vars.DB_POOL_SIZE || '5' }}
+          DB_MAX_OVERFLOW: ${{ vars.DB_MAX_OVERFLOW || '5' }}
+          DB_ECHO: ${{ vars.DB_ECHO || 'false' }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
+          GCS_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          INVITE_BASE_URL: ${{ vars.INVITE_BASE_URL }}
+          IMAGE_MAX_BYTES: ${{ vars.IMAGE_MAX_BYTES || '5242880' }}
+          STUDY_TIMEZONE: ${{ vars.STUDY_TIMEZONE || 'America/Sao_Paulo' }}
+        run: |
+          jq -n \
+            --arg ENVIRONMENT development \
+            --arg APP_NAME "$APP_NAME" \
+            --arg API_V1_PREFIX "$API_V1_PREFIX" \
+            --arg DATABASE_URL "$DATABASE_URL" \
+            --arg DB_POOL_SIZE "$DB_POOL_SIZE" \
+            --arg DB_MAX_OVERFLOW "$DB_MAX_OVERFLOW" \
+            --arg DB_ECHO "$DB_ECHO" \
+            --arg FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID" \
+            --arg GCS_BUCKET_NAME "$GCS_BUCKET_NAME" \
+            --arg GCS_PROJECT_ID "$GCS_PROJECT_ID" \
+            --arg INVITE_BASE_URL "$INVITE_BASE_URL" \
+            --arg IMAGE_MAX_BYTES "$IMAGE_MAX_BYTES" \
+            --arg STUDY_TIMEZONE "$STUDY_TIMEZONE" \
+            '$ARGS.named | with_entries(select(.value != ""))' > "$RUNNER_TEMP/runtime-env.yaml"
+
       - name: Run database migrations
         run: |
           gcloud run jobs deploy "${{ vars.CLOUD_RUN_SERVICE }}-migrate" \
             --image "$IMAGE" \
             --region "${{ vars.GCP_REGION }}" \
             --service-account "${{ vars.GCP_SERVICE_ACCOUNT }}" \
-            --set-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}" \
-            --set-secrets "DATABASE_URL=${{ vars.DATABASE_URL_SECRET }}:latest" \
+            --env-vars-file "$RUNNER_TEMP/runtime-env.yaml" \
             --command alembic \
             --args upgrade,head \
             --max-retries 0 \
@@ -104,9 +157,7 @@ jobs:
             --image "$IMAGE" \
             --region "${{ vars.GCP_REGION }}" \
             --service-account "${{ vars.GCP_SERVICE_ACCOUNT }}" \
-            --add-cloudsql-instances "${{ vars.CLOUD_SQL_INSTANCE }}" \
-            --set-secrets "DATABASE_URL=${{ vars.DATABASE_URL_SECRET }}:latest" \
-            --set-env-vars "ENVIRONMENT=production,FIREBASE_PROJECT_ID=${{ vars.FIREBASE_PROJECT_ID }},GCS_BUCKET_NAME=${{ vars.GCS_BUCKET_NAME }},GCS_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},INVITE_BASE_URL=${{ vars.INVITE_BASE_URL }},STUDY_TIMEZONE=America/Sao_Paulo" \
+            --env-vars-file "$RUNNER_TEMP/runtime-env.yaml" \
             --allow-unauthenticated \
             --quiet
 

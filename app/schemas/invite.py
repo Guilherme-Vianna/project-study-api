@@ -30,7 +30,9 @@ class InviteRead(BaseModel):
 
     @computed_field
     @property
-    def url(self) -> str:
+    def url(self) -> str | None:
+        if not settings.invite_base_url:
+            return None
         return f"{settings.invite_base_url.rstrip('/')}/{self.token}"
 
     @computed_field

@@ -9,5 +9,6 @@ class ImageStorage(Protocol):
     async def delete(self, object_name: str) -> None: ...
 
 
-def public_image_url(object_name: str) -> str:
-    return f"{settings.image_public_base_url}/{object_name}"
+def public_image_url(object_name: str) -> str | None:
+    base = settings.image_public_base_url
+    return f"{base}/{object_name}" if base else None

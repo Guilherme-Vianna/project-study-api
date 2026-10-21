@@ -18,5 +18,5 @@ class ImageRead(BaseModel):
 
     @computed_field
     @property
-    def url(self) -> str:
+    def url(self) -> str | None:
         return public_image_url(self.object_name)

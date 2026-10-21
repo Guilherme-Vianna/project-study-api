@@ -1,9 +1,11 @@
 from datetime import timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.models import Enrollment, TeacherInvite
 from app.models.base import utc_now
 from tests.fakes import FakeIdentityProvider
@@ -265,3 +267,15 @@ async def test_unregistering_student_ends_enrollments(
     assert students.json()["total"] == 0
     rows = await history_rows(session_factory, Enrollment)
     assert [row["operation"] for row in rows] == ["insert", "delete"]
+
+
+async def test_invite_url_is_null_without_base_url(
+    client: AsyncClient, identity: FakeIdentityProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "invite_base_url", None)
+    teacher_token, _ = await register(client, identity, "teacher-1", "teacher")
+
+    invite = await create_invite(client, teacher_token)
+
+    assert invite["url"] is None
+    assert invite["token"]

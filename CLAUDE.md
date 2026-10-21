@@ -32,6 +32,7 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
   (`statement` | `attachment`). `PUT /exercises/{id}` syncs children in place. Students never see `is_correct`/`expected_answer`.
 - Images: multipart, type from bytes (PNG/JPEG/GIF/WebP), max `IMAGE_MAX_BYTES`, public bucket object
   `teachers/<teacher_id>/images/<image_id>.<ext>`; GCS written first, removed if the DB write fails; in use → 409.
+  Optional config: no `GCS_BUCKET_NAME` → `UnconfiguredImageStorage` (upload 503, `url` null); no `INVITE_BASE_URL` → invite `url` null.
 - Study plans are reusable teacher templates (`study_plans`): subjects with `weekly_hours` + optional `weekdays`
   (ISO smallint[]), exercises with `allocated_hours` (defaults to `estimated_hours`) and order. Editing affects all assignees.
 - `study_plan_assignments` link a plan to an enrolled student; one active (`ended_at IS NULL`) per student via a partial
@@ -92,6 +93,7 @@ uv run alembic revision --autogenerate -m "message" && uv run alembic check
 ## Deployment
 
 - GitHub Actions: PRs run lint + tests + `alembic check`; pushes to `main` build → Artifact Registry → migrate (Cloud Run
-  Job `<service>-migrate`) → deploy → smoke test. Auth via SA key in secret `GCP_CREDENTIALS`; config in GitHub
-  `vars` (see `docs/deployment.md`). New runtime env vars must also be added to the workflow's `--set-env-vars`.
+  Job `<service>-migrate`) → deploy → smoke test. Auth via SA key secret `GCP_CREDENTIALS`; `DATABASE_URL` secret (Neon);
+  config in `development` environment vars (`docs/deployment.md`). New runtime env vars go into the workflow's jq env file.
+- `DATABASE_URL` accepts provider URLs (`postgresql://…?sslmode=…&channel_binding=…`); `Settings` normalizes for asyncpg.
 - `Dockerfile`: multi-stage uv, `python:3.14-slim`, non-root, `$PORT`; no BuildKit-only features.

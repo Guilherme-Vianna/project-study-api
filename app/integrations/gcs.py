@@ -8,6 +8,7 @@ from google.cloud import storage
 
 from app.core.config import settings
 from app.core.exceptions import StorageUnavailableError
+from app.core.storage import ImageStorage
 
 CACHE_CONTROL = "public, max-age=31536000, immutable"
 
@@ -42,8 +43,18 @@ class GCSImageStorage:
             raise StorageUnavailableError("Image storage is unavailable") from exc
 
 
+class UnconfiguredImageStorage:
+    async def upload(self, object_name: str, data: bytes, content_type: str) -> None:
+        raise StorageUnavailableError("Image storage is not configured (GCS_BUCKET_NAME)")
+
+    async def delete(self, object_name: str) -> None:
+        return None
+
+
 @lru_cache
-def get_image_storage() -> GCSImageStorage:
+def get_image_storage() -> ImageStorage:
+    if not settings.gcs_bucket_name:
+        return UnconfiguredImageStorage()
     return GCSImageStorage(
         settings.gcs_bucket_name, settings.gcs_project_id, settings.storage_emulator_host
     )

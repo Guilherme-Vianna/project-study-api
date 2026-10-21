@@ -6,6 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.integrations.gcs import UnconfiguredImageStorage, get_image_storage
+from app.main import app
 from app.models import Image
 from tests.fakes import FakeIdentityProvider, FakeImageStorage
 from tests.helpers import API, JPEG_BYTES, PNG_BYTES, auth, history_rows, register, upload_image
@@ -146,3 +148,37 @@ async def test_image_in_use_cannot_be_deleted(
     response = await client.delete(f"{IMAGES_URL}/{image['id']}", headers=auth(token))
 
     assert response.status_code == 409
+
+
+async def test_upload_without_bucket_configured_returns_503(
+    client: AsyncClient,
+    identity: FakeIdentityProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token, _ = await register(client, identity, "teacher-1", "teacher")
+    monkeypatch.setattr(settings, "gcs_bucket_name", None)
+    get_image_storage.cache_clear()
+    client_storage = get_image_storage()
+    app.dependency_overrides[get_image_storage] = lambda: client_storage
+    try:
+        response = await client.post(
+            IMAGES_URL, files={"file": ("a.png", PNG_BYTES, "image/png")}, headers=auth(token)
+        )
+    finally:
+        get_image_storage.cache_clear()
+
+    assert isinstance(client_storage, UnconfiguredImageStorage)
+    assert response.status_code == 503
+    assert "GCS_BUCKET_NAME" in response.json()["detail"]
+
+
+async def test_image_url_is_null_without_bucket(
+    client: AsyncClient, identity: FakeIdentityProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token, _ = await register(client, identity, "teacher-1", "teacher")
+    image = await upload_image(client, token)
+    monkeypatch.setattr(settings, "gcs_bucket_name", None)
+
+    response = await client.get(f"{IMAGES_URL}/{image['id']}", headers=auth(token))
+
+    assert response.json()["url"] is None

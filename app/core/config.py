@@ -1,6 +1,23 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+ASYNC_DRIVER = "postgresql+asyncpg"
+POSTGRES_SCHEMES = {"postgres", "postgresql", "postgresql+psycopg", "postgresql+psycopg2"}
+UNSUPPORTED_QUERY_KEYS = {"channel_binding"}
+
+
+def to_async_database_url(url: str) -> str:
+    parsed = make_url(url)
+    if parsed.drivername in POSTGRES_SCHEMES:
+        parsed = parsed.set(drivername=ASYNC_DRIVER)
+    query = {key: value for key, value in parsed.query.items() if key not in UNSUPPORTED_QUERY_KEYS}
+    sslmode = query.pop("sslmode", None)
+    if sslmode is not None and "ssl" not in query:
+        query["ssl"] = sslmode
+    return parsed.set(query=query).render_as_string(hide_password=False)
 
 
 class Settings(BaseSettings):
@@ -20,9 +37,9 @@ class Settings(BaseSettings):
     google_application_credentials: str | None = None
     firebase_auth_emulator_host: str | None = None
 
-    invite_base_url: str = "http://localhost:3000/invites"
+    invite_base_url: str | None = None
 
-    gcs_bucket_name: str = "project-study-images"
+    gcs_bucket_name: str | None = None
     gcs_project_id: str | None = None
     gcs_public_base_url: str | None = None
     storage_emulator_host: str | None = None
@@ -30,10 +47,33 @@ class Settings(BaseSettings):
 
     study_timezone: str = "America/Sao_Paulo"
 
+    @field_validator(
+        "invite_base_url",
+        "gcs_bucket_name",
+        "gcs_project_id",
+        "gcs_public_base_url",
+        "storage_emulator_host",
+        "firebase_project_id",
+        "google_application_credentials",
+        "firebase_auth_emulator_host",
+        mode="before",
+    )
+    @classmethod
+    def blank_to_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        return to_async_database_url(value)
+
     @property
-    def image_public_base_url(self) -> str:
-        base = self.gcs_public_base_url or f"https://storage.googleapis.com/{self.gcs_bucket_name}"
-        return base.rstrip("/")
+    def image_public_base_url(self) -> str | None:
+        if self.gcs_public_base_url:
+            return self.gcs_public_base_url.rstrip("/")
+        if self.gcs_bucket_name:
+            return f"https://storage.googleapis.com/{self.gcs_bucket_name}"
+        return None
 
 
 @lru_cache
