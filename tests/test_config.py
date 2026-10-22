@@ -18,8 +18,13 @@ def test_neon_url_is_converted_for_asyncpg() -> None:
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        ("postgres://u:p@host/db", "postgresql+asyncpg://u:p@host/db"),
-        ("postgresql+asyncpg://u:p@host:5432/db", "postgresql+asyncpg://u:p@host:5432/db"),
+        ("postgres://u:p@host/db", "postgresql+asyncpg://u:p@host/db?ssl=require"),
+        ("postgres://u:p@localhost/db", "postgresql+asyncpg://u:p@localhost/db"),
+        ("postgresql+asyncpg://u:p@db:5432/db", "postgresql+asyncpg://u:p@db:5432/db"),
+        (
+            "postgresql://u:p@host/db?sslmode=disable",
+            "postgresql+asyncpg://u:p@host/db?ssl=disable",
+        ),
         (
             "postgresql://u:p@host/db?ssl=verify-full&sslmode=require",
             "postgresql+asyncpg://u:p@host/db?ssl=verify-full",

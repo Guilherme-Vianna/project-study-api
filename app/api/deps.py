@@ -12,9 +12,11 @@ from app.integrations.firebase import get_identity_provider
 from app.integrations.gcs import get_image_storage
 from app.models.history import ACTOR_KEY
 from app.services.account import AccountService
+from app.services.attempt import AttemptService
 from app.services.enrollment import EnrollmentService
 from app.services.exercise import ExerciseService
 from app.services.image import ImageService
+from app.services.skill import SkillService
 from app.services.student import StudentService
 from app.services.study_plan import StudyPlanService
 from app.services.subject import SubjectService
@@ -101,3 +103,17 @@ def get_study_plan_service(session: AuditedSessionDep) -> StudyPlanService:
 
 
 StudyPlanServiceDep = Annotated[StudyPlanService, Depends(get_study_plan_service)]
+
+
+def get_attempt_service(session: AuditedSessionDep) -> AttemptService:
+    return AttemptService(session)
+
+
+AttemptServiceDep = Annotated[AttemptService, Depends(get_attempt_service)]
+
+
+def get_skill_service(session: AuditedSessionDep) -> SkillService:
+    return SkillService(session)
+
+
+SkillServiceDep = Annotated[SkillService, Depends(get_skill_service)]

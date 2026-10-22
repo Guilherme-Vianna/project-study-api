@@ -27,6 +27,7 @@ from app.models.history import versioned
 
 if TYPE_CHECKING:
     from app.models.image import Image
+    from app.models.skill import Skill
     from app.models.subject import Subject
 
 
@@ -63,6 +64,9 @@ class Exercise(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     )
     image_links: Mapped[list[ExerciseImage]] = relationship(
         order_by="ExerciseImage.position", viewonly=True, lazy="raise"
+    )
+    skill_links: Mapped[list[ExerciseSkill]] = relationship(
+        order_by="ExerciseSkill.id", viewonly=True, lazy="raise"
     )
 
 
@@ -105,3 +109,14 @@ class ExerciseImage(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     position: Mapped[int] = mapped_column(Integer)
 
     image: Mapped[Image] = relationship(viewonly=True, lazy="raise")
+
+
+@versioned
+class ExerciseSkill(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "exercise_skills"
+    __table_args__ = (UniqueConstraint("exercise_id", "skill_id"),)
+
+    exercise_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("exercises.id"))
+    skill_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("skills.id"), index=True)
+
+    skill: Mapped[Skill] = relationship(viewonly=True, lazy="raise")

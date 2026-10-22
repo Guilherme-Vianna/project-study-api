@@ -1,16 +1,19 @@
 from collections.abc import Iterable, Sequence
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, exists, func, select
 from sqlalchemy.orm import Load, selectinload
 
 from app.models.exercise import (
     Exercise,
     ExerciseImage,
     ExerciseOption,
+    ExerciseSkill,
     ExerciseSubject,
     ExerciseType,
 )
+from app.models.skill import Skill
+from app.models.study_plan import StudyPlanSubject
 from app.repositories.base import BaseRepository
 
 
@@ -22,6 +25,7 @@ def exercise_aggregate_options(base: Load | None = None) -> tuple[Load, ...]:
         load(Exercise.options).selectinload(ExerciseOption.image),
         load(Exercise.subject_links).selectinload(ExerciseSubject.subject),
         load(Exercise.image_links).selectinload(ExerciseImage.image),
+        load(Exercise.skill_links).selectinload(ExerciseSkill.skill).selectinload(Skill.group),
     )
 
 
@@ -63,6 +67,52 @@ class ExerciseRepository(BaseRepository[Exercise]):
             select(func.count(Exercise.id)), teacher_id, subject_id, exercise_type
         )
         return items, await self.session.scalar(count) or 0
+
+    async def get_available(self, exercise_id: UUID, plan_id: UUID) -> Exercise | None:
+        stmt = (
+            select(Exercise)
+            .where(Exercise.id == exercise_id, self._in_plan(plan_id))
+            .options(*AGGREGATE_OPTIONS)
+            .execution_options(populate_existing=True)
+        )
+        return await self.session.scalar(stmt)
+
+    async def list_available(
+        self,
+        teacher_id: UUID,
+        plan_id: UUID,
+        *,
+        offset: int,
+        limit: int,
+        subject_id: UUID | None = None,
+        exercise_type: ExerciseType | None = None,
+    ) -> tuple[Sequence[Exercise], int]:
+        def filtered[T: Select](stmt: T) -> T:
+            return self._filtered(stmt, teacher_id, subject_id, exercise_type).where(
+                self._in_plan(plan_id)
+            )
+
+        page = (
+            filtered(select(Exercise))
+            .options(*AGGREGATE_OPTIONS)
+            .order_by(Exercise.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        items = (await self.session.scalars(page)).all()
+        return items, await self.session.scalar(filtered(select(func.count(Exercise.id)))) or 0
+
+    async def count_available(self, plan_id: UUID) -> int:
+        stmt = select(func.count(Exercise.id)).where(self._in_plan(plan_id))
+        return await self.session.scalar(stmt) or 0
+
+    @staticmethod
+    def _in_plan(plan_id: UUID):
+        return exists().where(
+            ExerciseSubject.exercise_id == Exercise.id,
+            StudyPlanSubject.subject_id == ExerciseSubject.subject_id,
+            StudyPlanSubject.plan_id == plan_id,
+        )
 
     @staticmethod
     def _filtered[T: Select](
@@ -108,3 +158,14 @@ class ExerciseSubjectRepository(BaseRepository[ExerciseSubject]):
 
 class ExerciseImageRepository(BaseRepository[ExerciseImage]):
     model = ExerciseImage
+
+
+class ExerciseSkillRepository(BaseRepository[ExerciseSkill]):
+    model = ExerciseSkill
+
+    async def is_skill_used(self, skill_ids: Iterable[UUID]) -> bool:
+        wanted = set(skill_ids)
+        if not wanted:
+            return False
+        stmt = select(exists().where(ExerciseSkill.skill_id.in_(wanted)))
+        return bool(await self.session.scalar(stmt))

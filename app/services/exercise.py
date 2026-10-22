@@ -9,18 +9,21 @@ from app.models.exercise import (
     Exercise,
     ExerciseImage,
     ExerciseOption,
+    ExerciseSkill,
     ExerciseSubject,
     ExerciseType,
 )
 from app.models.teacher import Teacher
+from app.repositories.attempt import AttemptRepository
 from app.repositories.exercise import (
     ExerciseImageRepository,
     ExerciseOptionRepository,
     ExerciseRepository,
+    ExerciseSkillRepository,
     ExerciseSubjectRepository,
 )
 from app.repositories.image import ImageRepository
-from app.repositories.study_plan import StudyPlanExerciseRepository
+from app.repositories.skill import SkillRepository
 from app.repositories.subject import SubjectRepository
 from app.repositories.teacher import TeacherRepository
 from app.schemas.exercise import ExerciseWrite
@@ -34,11 +37,13 @@ class ExerciseService:
         self.session = session
         self.teachers = TeacherRepository(session)
         self.subjects = SubjectRepository(session)
+        self.skills = SkillRepository(session)
         self.images = ImageRepository(session)
         self.exercises = ExerciseRepository(session)
         self.options = ExerciseOptionRepository(session)
         self.subject_links = ExerciseSubjectRepository(session)
         self.image_links = ExerciseImageRepository(session)
+        self.skill_links = ExerciseSkillRepository(session)
 
     async def create(self, user: AuthenticatedUser, data: ExerciseWrite) -> Exercise:
         teacher = await require_teacher(self.teachers, user)
@@ -48,6 +53,7 @@ class ExerciseService:
         )
         await self._sync_options(exercise.id, [], data)
         await self._sync_subjects(exercise.id, [], data)
+        await self._sync_skills(exercise.id, [], data)
         await self._sync_images(exercise.id, [], data)
         await self.session.commit()
         return await self._load(teacher, exercise.id)
@@ -85,6 +91,7 @@ class ExerciseService:
         await self.exercises.save(exercise)
         await self._sync_options(exercise.id, list(exercise.options), data)
         await self._sync_subjects(exercise.id, list(exercise.subject_links), data)
+        await self._sync_skills(exercise.id, list(exercise.skill_links), data)
         await self._sync_images(exercise.id, list(exercise.image_links), data)
         await self.session.commit()
         return await self._load(teacher, exercise.id)
@@ -92,8 +99,8 @@ class ExerciseService:
     async def delete(self, user: AuthenticatedUser, exercise_id: UUID) -> None:
         teacher = await require_teacher(self.teachers, user)
         exercise = await self._load(teacher, exercise_id)
-        if await StudyPlanExerciseRepository(self.session).is_exercise_used(exercise.id):
-            raise ConflictError("Exercise is used by a study plan or has recorded progress")
+        if await AttemptRepository(self.session).is_exercise_used(exercise.id):
+            raise ConflictError("Exercise has recorded attempts")
         await self._delete_aggregate(exercise)
         await self.session.commit()
 
@@ -112,6 +119,9 @@ class ExerciseService:
         missing_subjects = await self.subjects.missing_for_teacher(teacher.id, data.subject_ids)
         if missing_subjects:
             raise UnprocessableError(f"Unknown subjects: {sorted(map(str, missing_subjects))}")
+        missing_skills = await self.skills.missing_for_teacher(teacher.id, data.skill_ids)
+        if missing_skills:
+            raise UnprocessableError(f"Unknown skills: {sorted(map(str, missing_skills))}")
         missing_images = await self.images.missing_for_teacher(
             teacher.id, data.referenced_image_ids()
         )
@@ -151,6 +161,20 @@ class ExerciseService:
                     ExerciseSubject(exercise_id=exercise_id, subject_id=subject_id)
                 )
 
+    async def _sync_skills(
+        self, exercise_id: UUID, existing: list[ExerciseSkill], data: ExerciseWrite
+    ) -> None:
+        wanted = set(data.skill_ids)
+        for link in existing:
+            if link.skill_id not in wanted:
+                await self.skill_links.delete(link)
+        current = {link.skill_id for link in existing}
+        for skill_id in data.skill_ids:
+            if skill_id not in current:
+                await self.skill_links.add(
+                    ExerciseSkill(exercise_id=exercise_id, skill_id=skill_id)
+                )
+
     async def _sync_images(
         self, exercise_id: UUID, existing: list[ExerciseImage], data: ExerciseWrite
     ) -> None:
@@ -180,6 +204,6 @@ class ExerciseService:
         await self.exercises.delete(exercise)
 
     async def _delete_children(self, exercise_id: UUID) -> None:
-        for repository in (self.options, self.subject_links, self.image_links):
+        for repository in (self.options, self.subject_links, self.image_links, self.skill_links):
             for child in await repository.find_by(exercise_id=exercise_id):
                 await repository.delete(child)

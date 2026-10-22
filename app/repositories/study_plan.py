@@ -4,24 +4,12 @@ from uuid import UUID
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import selectinload
 
-from app.models.study_plan import (
-    ExerciseCompletion,
-    StudyPlan,
-    StudyPlanAssignment,
-    StudyPlanExercise,
-    StudyPlanSubject,
-)
+from app.models.study_plan import StudyPlan, StudyPlanAssignment, StudyPlanSubject
 from app.repositories.base import BaseRepository
-from app.repositories.exercise import exercise_aggregate_options
 
 
 def plan_aggregate_options() -> tuple:
-    exercises = selectinload(StudyPlan.exercises)
-    return (
-        selectinload(StudyPlan.subjects).selectinload(StudyPlanSubject.subject),
-        exercises,
-        *exercise_aggregate_options(exercises.selectinload(StudyPlanExercise.exercise)),
-    )
+    return (selectinload(StudyPlan.subjects).selectinload(StudyPlanSubject.subject),)
 
 
 class StudyPlanRepository(BaseRepository[StudyPlan]):
@@ -58,17 +46,6 @@ class StudyPlanSubjectRepository(BaseRepository[StudyPlanSubject]):
 
     async def is_subject_used(self, subject_id: UUID) -> bool:
         stmt = select(exists().where(StudyPlanSubject.subject_id == subject_id))
-        return bool(await self.session.scalar(stmt))
-
-
-class StudyPlanExerciseRepository(BaseRepository[StudyPlanExercise]):
-    model = StudyPlanExercise
-
-    async def is_exercise_used(self, exercise_id: UUID) -> bool:
-        stmt = select(
-            exists().where(StudyPlanExercise.exercise_id == exercise_id)
-            | exists().where(ExerciseCompletion.exercise_id == exercise_id)
-        )
         return bool(await self.session.scalar(stmt))
 
 
@@ -138,7 +115,3 @@ class AssignmentRepository(BaseRepository[StudyPlanAssignment]):
     async def has_any_for_plan(self, plan_id: UUID) -> bool:
         stmt = select(exists().where(StudyPlanAssignment.plan_id == plan_id))
         return bool(await self.session.scalar(stmt))
-
-
-class CompletionRepository(BaseRepository[ExerciseCompletion]):
-    model = ExerciseCompletion

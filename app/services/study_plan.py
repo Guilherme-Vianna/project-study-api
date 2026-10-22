@@ -10,25 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedUser
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
+from app.models.attempt import ExerciseAttempt, ReviewStatus
 from app.models.base import utc_now
-from app.models.exercise import Exercise
 from app.models.student import Student
-from app.models.study_plan import (
-    ExerciseCompletion,
-    StudyPlan,
-    StudyPlanAssignment,
-    StudyPlanExercise,
-    StudyPlanSubject,
-    Weekday,
-)
+from app.models.study_plan import StudyPlan, StudyPlanAssignment, StudyPlanSubject, Weekday
 from app.models.teacher import Teacher
+from app.repositories.attempt import AttemptRepository
 from app.repositories.enrollment import EnrollmentRepository
 from app.repositories.exercise import ExerciseRepository, ExerciseSubjectRepository
 from app.repositories.student import StudentRepository
 from app.repositories.study_plan import (
     AssignmentRepository,
-    CompletionRepository,
-    StudyPlanExerciseRepository,
     StudyPlanRepository,
     StudyPlanSubjectRepository,
 )
@@ -57,18 +49,16 @@ class StudyPlanService:
         self.enrollments = EnrollmentRepository(session)
         self.plans = StudyPlanRepository(session)
         self.plan_subjects = StudyPlanSubjectRepository(session)
-        self.plan_exercises = StudyPlanExerciseRepository(session)
         self.assignments = AssignmentRepository(session)
-        self.completions = CompletionRepository(session)
+        self.attempts = AttemptRepository(session)
 
     async def create(self, user: AuthenticatedUser, data: StudyPlanWrite) -> StudyPlan:
         teacher = await require_teacher(self.teachers, user)
-        exercises = await self._validate_references(teacher, data)
+        await self._validate_references(teacher, data)
         plan = await self.plans.add(
             StudyPlan(teacher_id=teacher.id, title=data.title, description=data.description)
         )
         await self._sync_subjects(plan.id, [], data)
-        await self._sync_exercises(plan.id, [], data, exercises)
         await self.session.commit()
         return await self._owned_plan(teacher, plan.id)
 
@@ -87,13 +77,12 @@ class StudyPlanService:
     ) -> StudyPlan:
         teacher = await require_teacher(self.teachers, user)
         plan = await self._owned_plan(teacher, plan_id)
-        exercises = await self._validate_references(teacher, data)
+        await self._validate_references(teacher, data)
         if (plan.title, plan.description) != (data.title, data.description):
             plan.title = data.title
             plan.description = data.description
             await self.plans.save(plan)
         await self._sync_subjects(plan.id, list(plan.subjects), data)
-        await self._sync_exercises(plan.id, list(plan.exercises), data, exercises)
         await self.session.commit()
         return await self._owned_plan(teacher, plan.id)
 
@@ -150,53 +139,18 @@ class StudyPlanService:
 
     async def student_plan(
         self, user: AuthenticatedUser
-    ) -> tuple[StudyPlanAssignment, StudyPlan, Teacher, dict[UUID, ExerciseCompletion]]:
+    ) -> tuple[StudyPlanAssignment, StudyPlan, Teacher, int]:
         student = await require_student(self.students, user)
-        assignment = await self._active_assignment(student)
+        assignment = await self.active_assignment(student)
         plan = await self.plans.get_aggregate(assignment.plan_id)
         assert plan is not None
         teacher = await self.teachers.get(plan.teacher_id)
         assert teacher is not None
-        completions = await self.completions.find_by(assignment_id=assignment.id)
-        return assignment, plan, teacher, {item.exercise_id: item for item in completions}
+        return assignment, plan, teacher, await self.exercises.count_available(plan.id)
 
     async def student_progress(self, user: AuthenticatedUser, week_of: date | None) -> ProgressRead:
         student = await require_student(self.students, user)
-        return await self._progress(await self._active_assignment(student), week_of)
-
-    async def complete(self, user: AuthenticatedUser, exercise_id: UUID) -> ExerciseCompletion:
-        student = await require_student(self.students, user)
-        assignment = await self._active_assignment(student)
-        item = await self.plan_exercises.get_by(plan_id=assignment.plan_id, exercise_id=exercise_id)
-        if item is None:
-            raise NotFoundError(f"Exercise {exercise_id} is not part of your study plan")
-        if await self.completions.get_by(assignment_id=assignment.id, exercise_id=exercise_id):
-            raise ConflictError("Exercise is already marked as completed")
-        try:
-            completion = await self.completions.add(
-                ExerciseCompletion(
-                    assignment_id=assignment.id,
-                    exercise_id=exercise_id,
-                    hours=item.allocated_hours,
-                    completed_at=utc_now(),
-                )
-            )
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise ConflictError("Exercise is already marked as completed") from exc
-        return completion
-
-    async def uncomplete(self, user: AuthenticatedUser, exercise_id: UUID) -> None:
-        student = await require_student(self.students, user)
-        assignment = await self._active_assignment(student)
-        completion = await self.completions.get_by(
-            assignment_id=assignment.id, exercise_id=exercise_id
-        )
-        if completion is None:
-            raise NotFoundError("Exercise is not marked as completed")
-        await self.completions.delete(completion)
-        await self.session.commit()
+        return await self._progress(await self.active_assignment(student), week_of)
 
     async def end_for_enrollment(self, teacher_id: UUID, student_id: UUID) -> None:
         assignment = await self.assignments.active_for_teacher_and_student(teacher_id, student_id)
@@ -214,6 +168,12 @@ class StudyPlanService:
         for assignment in await self.assignments.find_by(student_id=student_id):
             await self._delete_assignment(assignment)
 
+    async def active_assignment(self, student: Student) -> StudyPlanAssignment:
+        assignment = await self.assignments.get_active_for_student(student.id)
+        if assignment is None:
+            raise NotFoundError("You do not have an active study plan")
+        return assignment
+
     async def _owned_plan(self, teacher: Teacher, plan_id: UUID) -> StudyPlan:
         plan = await self.plans.get_aggregate(plan_id, teacher.id)
         if plan is None:
@@ -229,30 +189,11 @@ class StudyPlanService:
             raise NotFoundError(f"Assignment {assignment_id} not found")
         return assignment
 
-    async def _active_assignment(self, student: Student) -> StudyPlanAssignment:
-        assignment = await self.assignments.get_active_for_student(student.id)
-        if assignment is None:
-            raise NotFoundError("You do not have an active study plan")
-        return assignment
-
-    async def _validate_references(
-        self, teacher: Teacher, data: StudyPlanWrite
-    ) -> dict[UUID, Exercise]:
+    async def _validate_references(self, teacher: Teacher, data: StudyPlanWrite) -> None:
         subject_ids = [item.subject_id for item in data.subjects]
         missing_subjects = await self.subjects.missing_for_teacher(teacher.id, subject_ids)
         if missing_subjects:
             raise UnprocessableError(f"Unknown subjects: {sorted(map(str, missing_subjects))}")
-        wanted = [item.exercise_id for item in data.exercises]
-        exercises = await self.exercises.owned_by_ids(teacher.id, wanted)
-        missing_exercises = set(wanted) - exercises.keys()
-        if missing_exercises:
-            raise UnprocessableError(f"Unknown exercises: {sorted(map(str, missing_exercises))}")
-        for item in data.exercises:
-            if item.allocated_hours is None and exercises[item.exercise_id].estimated_hours is None:
-                raise UnprocessableError(
-                    f"Exercise {item.exercise_id} needs allocated_hours (it has no estimated_hours)"
-                )
-        return exercises
 
     async def _sync_subjects(
         self, plan_id: UUID, existing: list[StudyPlanSubject], data: StudyPlanWrite
@@ -279,44 +220,14 @@ class StudyPlanService:
                 current.weekdays = weekdays
                 await self.plan_subjects.save(current)
 
-    async def _sync_exercises(
-        self,
-        plan_id: UUID,
-        existing: list[StudyPlanExercise],
-        data: StudyPlanWrite,
-        exercises: dict[UUID, Exercise],
-    ) -> None:
-        by_exercise = {item.exercise_id: item for item in existing}
-        wanted = {item.exercise_id for item in data.exercises}
-        for item in existing:
-            if item.exercise_id not in wanted:
-                await self.plan_exercises.delete(item)
-        for position, item in enumerate(data.exercises):
-            hours = item.allocated_hours or exercises[item.exercise_id].estimated_hours
-            current = by_exercise.get(item.exercise_id)
-            if current is None:
-                await self.plan_exercises.add(
-                    StudyPlanExercise(
-                        plan_id=plan_id,
-                        exercise_id=item.exercise_id,
-                        allocated_hours=hours,
-                        position=position,
-                    )
-                )
-            elif (current.allocated_hours, current.position) != (hours, position):
-                current.allocated_hours = hours
-                current.position = position
-                await self.plan_exercises.save(current)
-
     async def _delete_plan(self, plan: StudyPlan) -> None:
-        for repository in (self.plan_subjects, self.plan_exercises):
-            for item in await repository.find_by(plan_id=plan.id):
-                await repository.delete(item)
+        for item in await self.plan_subjects.find_by(plan_id=plan.id):
+            await self.plan_subjects.delete(item)
         await self.plans.delete(plan)
 
     async def _delete_assignment(self, assignment: StudyPlanAssignment) -> None:
-        for completion in await self.completions.find_by(assignment_id=assignment.id):
-            await self.completions.delete(completion)
+        for attempt in await self.attempts.find_by(assignment_id=assignment.id):
+            await self.attempts.delete(attempt)
         await self.assignments.delete(assignment)
 
     async def _progress(
@@ -324,18 +235,18 @@ class StudyPlanService:
     ) -> ProgressRead:
         plan = await self.plans.get_aggregate(assignment.plan_id)
         assert plan is not None
-        completions = await self.completions.find_by(assignment_id=assignment.id)
+        attempts = list(await self.attempts.find_by(assignment_id=assignment.id))
         subjects_of = await self.exercise_subjects.subject_ids_by_exercise(
-            completion.exercise_id for completion in completions
+            attempt.exercise_id for attempt in attempts
         )
         timezone = ZoneInfo(settings.study_timezone)
         reference = week_of or datetime.now(timezone).date()
         week_start = reference - timedelta(days=reference.weekday())
         window_start = datetime.combine(week_start, time.min, timezone)
         window_end = window_start + timedelta(days=7)
-        in_week = [item for item in completions if window_start <= item.completed_at < window_end]
+        in_week = [item for item in attempts if window_start <= item.submitted_at < window_end]
 
-        def hours_for(items: list[ExerciseCompletion], subject_id: UUID | None = None) -> Decimal:
+        def hours_for(items: list[ExerciseAttempt], subject_id: UUID | None = None) -> Decimal:
             return sum(
                 (
                     item.hours
@@ -344,6 +255,9 @@ class StudyPlanService:
                 ),
                 ZERO,
             )
+
+        def count_status(status: ReviewStatus) -> int:
+            return sum(1 for item in attempts if item.review_status is status)
 
         subject_rows = []
         for plan_subject in plan.subjects:
@@ -355,22 +269,20 @@ class StudyPlanService:
                     weekly_hours=plan_subject.weekly_hours,
                     week_completed_hours=week_hours,
                     week_remaining_hours=max(plan_subject.weekly_hours - week_hours, ZERO),
-                    total_completed_hours=hours_for(completions, plan_subject.subject_id),
+                    total_completed_hours=hours_for(attempts, plan_subject.subject_id),
                 )
             )
-        plan_exercise_ids = {item.exercise_id for item in plan.exercises}
-        completed_in_plan = sum(1 for item in completions if item.exercise_id in plan_exercise_ids)
-        total_exercises = len(plan.exercises)
         return ProgressRead(
             assignment_id=assignment.id,
             week_start=week_start,
             week_end=week_start + timedelta(days=6),
             required_weekly_hours=sum((item.weekly_hours for item in plan.subjects), ZERO),
             week_completed_hours=hours_for(in_week),
-            allocated_hours=sum((item.allocated_hours for item in plan.exercises), ZERO),
-            completed_hours=hours_for(completions),
-            total_exercises=total_exercises,
-            completed_exercises=completed_in_plan,
-            completion_rate=round(completed_in_plan / total_exercises, 4) if total_exercises else 0,
+            completed_hours=hours_for(attempts),
+            available_exercises=await self.exercises.count_available(plan.id),
+            attempted_exercises=len({item.exercise_id for item in attempts}),
+            total_attempts=len(attempts),
+            pending_reviews=count_status(ReviewStatus.PENDING),
+            approved_attempts=count_status(ReviewStatus.APPROVED),
             subjects=subject_rows,
         )

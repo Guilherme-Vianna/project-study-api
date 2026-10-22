@@ -9,6 +9,7 @@ from app.repositories.teacher import TeacherRepository
 from app.services.exercise import ExerciseService
 from app.services.image import ImageService
 from app.services.profile import ProfileService
+from app.services.skill import SkillService
 from app.services.study_plan import StudyPlanService
 from app.services.subject import SubjectService
 
@@ -33,6 +34,7 @@ class TeacherService(ProfileService[Teacher]):
         for invite in await invites.find_by(teacher_id=profile.id):
             await invites.delete(invite)
         await ExerciseService(self.session).purge_for_teacher(profile.id)
+        await SkillService(self.session).purge_for_teacher(profile.id)
         await SubjectService(self.session).purge_for_teacher(profile.id)
         self._orphaned_objects = await self.image_service.purge_for_teacher(profile.id)
 

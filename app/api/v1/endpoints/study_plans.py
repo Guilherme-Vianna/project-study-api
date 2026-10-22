@@ -9,7 +9,6 @@ from app.schemas.common import Page
 from app.schemas.study_plan import (
     AssignmentCreate,
     AssignmentRead,
-    CompletionRead,
     ProgressRead,
     StudentStudyPlanRead,
     StudyPlanRead,
@@ -124,24 +123,3 @@ async def get_my_progress(
     user: CurrentUserDep, service: StudyPlanServiceDep, week_of: date | None = None
 ) -> ProgressRead:
     return await service.student_progress(user, week_of)
-
-
-@router.post(
-    f"{STUDENT_PLAN}/exercises/{{exercise_id}}/completion",
-    response_model=CompletionRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def complete_exercise(
-    exercise_id: UUID, user: CurrentUserDep, service: StudyPlanServiceDep
-) -> CompletionRead:
-    return CompletionRead.model_validate(await service.complete(user, exercise_id))
-
-
-@router.delete(
-    f"{STUDENT_PLAN}/exercises/{{exercise_id}}/completion",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def uncomplete_exercise(
-    exercise_id: UUID, user: CurrentUserDep, service: StudyPlanServiceDep
-) -> None:
-    await service.uncomplete(user, exercise_id)

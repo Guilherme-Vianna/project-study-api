@@ -33,14 +33,16 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 - Images: multipart, type from bytes (PNG/JPEG/GIF/WebP), max `IMAGE_MAX_BYTES`, public bucket object
   `teachers/<teacher_id>/images/<image_id>.<ext>`; GCS written first, removed if the DB write fails; in use → 409.
   Optional config: no `GCS_BUCKET_NAME` → `UnconfiguredImageStorage` (upload 503, `url` null); no `INVITE_BASE_URL` → invite `url` null.
-- Study plans are reusable teacher templates (`study_plans`): subjects with `weekly_hours` + optional `weekdays`
-  (ISO smallint[]), exercises with `allocated_hours` (defaults to `estimated_hours`) and order. Editing affects all assignees.
-- `study_plan_assignments` link a plan to an enrolled student; one active (`ended_at IS NULL`) per student via a partial
-  unique index. Ending (teacher DELETE or enrollment end) keeps the row and its progress.
-- `exercise_completions` (assignment + exercise, hours snapshot) are progress; they survive plan edits. Progress weeks use
-  `STUDY_TIMEZONE`; an exercise's hours count for each of its subjects.
-- Delete guards (409): assigned plans, exercises in plans/completions, subjects in plans, images in exercises.
-- Unregistering purges the user's plans/assignments/completions first, then enrollments and content (then GCS objects).
+- Study plans (`study_plans`): teacher templates of subjects with `weekly_hours` + optional `weekdays` (ISO smallint[]);
+  students see every teacher exercise sharing a plan subject (live). `study_plan_assignments`: one active per enrolled
+  student (partial unique index); ending (DELETE or enrollment end) keeps it and its attempts. Assigned plans are kept.
+- `exercise_attempts` snapshot answer, options, correctness, `hours` (`spent_hours`/`estimated_hours`, else 422); open
+  answers repeat, multiple choice once per assignment (partial unique index). `PUT /attempts/{id}/review` sets status +
+  feedback. Weekly progress (`STUDY_TIMEZONE`) sums attempt hours for each subject of the exercise.
+- Skills: `skill_groups` own ordered `skill_levels` and `skills` (`PUT` syncs by id); `exercise_skills` tag exercises;
+  teachers set enrolled students' `student_skills` level (timeline = history table); students only read them.
+- Delete guards (409): assigned plans, exercises with attempts, subjects in plans, images in exercises, used skills/levels.
+- Unregistering purges the user's plans/assignments/attempts and skills first, then enrollments and content (then GCS objects).
 
 ## SCD Type 4
 
@@ -57,14 +59,12 @@ app/
   core/          config, database, auth (IdentityProvider), storage (ImageStorage), exceptions
   integrations/  firebase.py (identity), gcs.py (image storage)
   api/           deps, pagination (PaginationDep, to_page), health, v1/endpoints/*
-  services/      profile, teacher, student, enrollment, account, subject, image, exercise, study_plan, common
-  repositories/  base (get_by/find_by), profile, role, invite, enrollment, subject, image, exercise, study_plan
-  models/        base, profile, history, teacher, student, invite, enrollment, subject, image, exercise, study_plan
-  schemas/       profile, types, teacher, student, invite, enrollment, account, subject, image, exercise, study_plan
+  models/ schemas/ services/ repositories/  one module per resource (profile, teacher, student, enrollment, subject,
+                 image, exercise, study_plan, attempt, skill, ...) + helpers (base, history, types, common, role)
 alembic/         async env.py, versions/ (ruff post-write hooks)
-tests/           conftest, fakes (identity + storage), helpers, one module per resource
+tests/           conftest, fakes (identity + storage), helpers, plan_scenario, one module per resource
 docker/          postgres/init (app_test DB), gcs/ (emulator bucket seed)
-docs/            deployment.md (one-time GCP/GitHub setup)
+docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (API handoff for the frontend)
 .github/         workflows/deploy.yml (CI + Cloud Run deploy)
 ```
 
