@@ -95,6 +95,7 @@ Everything lives in the `development` environment (Settings → Environments →
 | --- | --- |
 | `GCP_CREDENTIALS` | Full content of `gcp-credentials.json` |
 | `DATABASE_URL` | PostgreSQL connection string (Neon format accepted as is) |
+| `REDIS_URL` | Optional Redis URL for the response cache (`rediss://default:<password>@<host>:6379` on Upstash); missing disables caching |
 
 **Environment variables, required** (the deploy fails early listing any missing one)
 
@@ -120,7 +121,8 @@ Everything lives in the `development` environment (Settings → Environments →
 | `RUN_MIGRATIONS_ON_STARTUP` | `true` | |
 | `IMAGE_MAX_BYTES` | `5242880` | |
 | `STUDY_TIMEZONE` | `America/Sao_Paulo` | |
+| `CACHE_TTL_SECONDS` | `600` | Upper bound for cached responses (also capped by token and invite expiry) |
 
-Do not set `PORT`: Cloud Run reserves it and injects it into the container.
+Do not set `PORT` or `K_REVISION`: Cloud Run injects them (each revision gets a fresh cache namespace).
 
 The service is deployed with `--allow-unauthenticated` because authentication happens in the API with Firebase ID tokens.

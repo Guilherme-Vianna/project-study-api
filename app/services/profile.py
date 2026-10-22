@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import ROLE_CLAIM, AuthenticatedUser, IdentityProvider, Role, role_from_claims
+from app.core.cache import IDENTITY_DEPENDENCY, track_write
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.base import Base
 from app.repositories.profile import ProfileRepository
@@ -94,6 +95,7 @@ class ProfileService[ProfileT: Base]:
     async def _commit_with_claims(
         self, uid: str, previous: dict[str, Any], updated: dict[str, Any]
     ) -> None:
+        track_write(IDENTITY_DEPENDENCY)
         try:
             await self.identity.set_custom_claims(uid, updated)
         except Exception:

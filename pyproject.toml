@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "google-cloud-storage>=3.17.1",
     "tzdata>=2026.5",
+    "redis>=6",
 ]
 
 [dependency-groups]

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedUser
+from app.core.cache import cache_until
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, UnprocessableError
 from app.models.attempt import ExerciseAttempt, ReviewStatus
@@ -244,6 +245,8 @@ class StudyPlanService:
         week_start = reference - timedelta(days=reference.weekday())
         window_start = datetime.combine(week_start, time.min, timezone)
         window_end = window_start + timedelta(days=7)
+        if week_of is None:
+            cache_until(window_end)
         in_week = [item for item in attempts if window_start <= item.submitted_at < window_end]
 
         def hours_for(items: list[ExerciseAttempt], subject_id: UUID | None = None) -> Decimal:

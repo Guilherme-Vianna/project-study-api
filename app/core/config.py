@@ -54,6 +54,10 @@ class Settings(BaseSettings):
 
     study_timezone: str = "America/Sao_Paulo"
 
+    redis_url: str | None = None
+    cache_ttl_seconds: int = 600
+    k_revision: str = "local"
+
     @model_validator(mode="before")
     @classmethod
     def strip_whitespace(cls, values: Any) -> Any:
@@ -73,6 +77,7 @@ class Settings(BaseSettings):
         "google_application_credentials",
         "firebase_credentials_base64",
         "firebase_auth_emulator_host",
+        "redis_url",
         mode="before",
     )
     @classmethod

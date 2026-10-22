@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedUser
+from app.core.cache import cache_until
 from app.core.exceptions import ConflictError, GoneError, NotFoundError
 from app.models.base import utc_now
 from app.models.enrollment import Enrollment
@@ -48,6 +49,10 @@ class EnrollmentService:
     ) -> tuple[Sequence[TeacherInvite], int]:
         teacher = await self._teacher(user)
         items = await self.invites.list_for_teacher(teacher.id, offset=offset, limit=limit)
+        now = utc_now()
+        for item in items:
+            if item.expires_at is not None and item.expires_at > now:
+                cache_until(item.expires_at)
         return items, await self.invites.count_for_teacher(teacher.id)
 
     async def revoke_invite(self, user: AuthenticatedUser, invite_id: UUID) -> None:
@@ -62,6 +67,8 @@ class EnrollmentService:
 
     async def preview_invite(self, token: str) -> tuple[TeacherInvite, Teacher]:
         invite = await self._active_invite(token)
+        if invite.expires_at is not None:
+            cache_until(invite.expires_at)
         teacher = await self.teachers.get(invite.teacher_id)
         assert teacher is not None
         return invite, teacher
