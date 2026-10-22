@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedUser, IdentityProvider, Role, role_from_claims
+from app.core.cache import IDENTITY_DEPENDENCY, track_read
 from app.repositories.student import StudentRepository
 from app.repositories.teacher import TeacherRepository
 from app.schemas.account import AccountRead
@@ -15,6 +16,7 @@ class AccountService:
         self.students = StudentRepository(session)
 
     async def get(self, user: AuthenticatedUser) -> AccountRead:
+        track_read(IDENTITY_DEPENDENCY)
         role = role_from_claims(await self.identity.get_custom_claims(user.uid))
         teacher = (
             await self.teachers.get_by_firebase_uid(user.uid) if role is Role.TEACHER else None

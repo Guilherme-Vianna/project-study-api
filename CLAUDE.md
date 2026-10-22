@@ -2,19 +2,17 @@
 
 ## Rules for the AI
 
-- Keep this file 100% accurate at all times: update it in the same change that alters structure, stack, commands or conventions.
-- This file must never exceed 100 lines.
-- Everything in the repository is written in English (code, identifiers, docs, commit messages).
-- Do not write comments or docstrings in code. Strip Alembic autogenerate comments from migrations.
+- Keep this file 100% accurate (update it with any structure/stack/command/convention change); max 100 lines.
+- English everywhere (code, identifiers, docs, commits); no code comments/docstrings (strip Alembic's too).
 - Every new environment variable goes into `.env.example` and `Settings`.
 
 ## Project
 
-School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, Google Cloud Storage, Cloud Run.
+School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, Google Cloud Storage, Redis, Cloud Run.
 
-- Python 3.14, uv (`package = false`), taskipy (`uv run task dev`); FastAPI, Pydantic v2, firebase-admin, google-cloud-storage, python-multipart, tzdata
+- Python 3.14, uv (`package = false`), taskipy (`uv run task dev`); FastAPI, Pydantic v2, firebase-admin, google-cloud-storage, python-multipart, tzdata, redis
 - SQLAlchemy 2.0 async + asyncpg, Alembic; primary keys are UUIDv7 via stdlib `uuid.uuid7`
-- Tests: pytest + pytest-asyncio (auto) + httpx against real Postgres (`app_test`); Firebase and GCS are faked
+- Tests: pytest + pytest-asyncio (auto) + httpx against real Postgres (`app_test`); Firebase, GCS and Redis are faked
 
 ## Domain rules
 
@@ -56,9 +54,9 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 
 ```
 app/
-  core/          config, database, auth (IdentityProvider), storage (ImageStorage), exceptions
-  integrations/  firebase.py (identity), gcs.py (image storage)
-  api/           deps, pagination (PaginationDep, to_page), health, v1/endpoints/*
+  core/          config, database, auth (IdentityProvider), storage (ImageStorage), cache (ResponseCache), exceptions
+  integrations/  firebase.py (identity), gcs.py (image storage), redis.py (response cache)
+  api/           deps, pagination (PaginationDep, to_page), health, cache (middleware), v1/endpoints/*
   models/ schemas/ services/ repositories/  one module per resource (profile, teacher, student, enrollment, subject,
                  image, exercise, study_plan, attempt, skill, ...) + helpers (base, history, types, common, role)
 alembic/         async env.py, versions/ (ruff post-write hooks)
@@ -71,6 +69,8 @@ docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (
 ## Layer rules
 
 - CORS: `CORS_ORIGINS` (comma-separated, default `*`) feeds `CORSMiddleware` in `create_app`.
+- Response cache (`api/cache.py`, `core/cache.py`; off without `REDIS_URL`): v1 GET 200s keyed by token+path+query; ORM
+  listeners track tables read/written, writes bump table versions. Non-DB inputs: `track_read`/`track_write`/`cache_until`.
 - Endpoints parse input, call a service, map to schemas. All v1 routes need a bearer token.
 - Services own rules, raise `AppError` subclasses (never `HTTPException`) and commit.
 - Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via

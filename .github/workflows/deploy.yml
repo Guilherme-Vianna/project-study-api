@@ -122,6 +122,8 @@ jobs:
           INVITE_BASE_URL: ${{ vars.INVITE_BASE_URL }}
           IMAGE_MAX_BYTES: ${{ vars.IMAGE_MAX_BYTES || '5242880' }}
           STUDY_TIMEZONE: ${{ vars.STUDY_TIMEZONE || 'America/Sao_Paulo' }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          CACHE_TTL_SECONDS: ${{ vars.CACHE_TTL_SECONDS || '600' }}
         run: |
           jq -n \
             --arg ENVIRONMENT development \
@@ -138,7 +140,7 @@ jobs:
             --arg GCS_PROJECT_ID "$GCS_PROJECT_ID" \
             --arg INVITE_BASE_URL "$INVITE_BASE_URL" \
             --arg IMAGE_MAX_BYTES "$IMAGE_MAX_BYTES" \
-            --arg STUDY_TIMEZONE "$STUDY_TIMEZONE" \
+            --arg STUDY_TIMEZONE "$STUDY_TIMEZONE"             --arg REDIS_URL "$REDIS_URL"             --arg CACHE_TTL_SECONDS "$CACHE_TTL_SECONDS" \
             '$ARGS.named | map_values(gsub("^\\s+|\\s+$"; "")) | with_entries(select(.value != ""))' > "$RUNNER_TEMP/runtime-env.yaml"
 
       - name: Deploy Cloud Run service
