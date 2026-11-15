@@ -647,3 +647,53 @@ async def test_logged_call_falls_back_and_labels_it(caplog: pytest.LogCaptureFix
     assert ok.labels["llm_fallback"] == "yes"
     assert ok.labels["llm_model"] == "gemini-3.5-flash"
     assert ok.fields["served_model"] == "gemini-3.6-flash"
+
+
+def test_match_skills_accepts_only_listed_skills() -> None:
+    from app.core.question_generation import SkillOption, match_skills
+
+    options = [
+        SkillOption(id="trig", name="Trigonometria", group="Matemática"),
+        SkillOption(id="eq", name="Equações", group="Matemática"),
+        SkillOption(id="read-en", name="Reading", group="English"),
+        SkillOption(id="read-es", name="Reading", group="Español"),
+    ]
+
+    names = ["Matematica / Trigonometria", "equacoes", "Reading", "Inventada", "English / Reading"]
+
+    assert match_skills(names, options) == ["trig", "eq", "read-en"]
+
+
+async def test_generated_questions_suggest_the_teacher_skills(
+    client: AsyncClient,
+    identity: FakeIdentityProvider,
+    session_factory: async_sessionmaker[AsyncSession],
+    generator: FakeQuestionGenerator,
+) -> None:
+    await seed(session_factory, item(1))
+    token = await teacher(client, identity)
+    other, _ = await register(client, identity, "teacher-2", "teacher")
+    group = {
+        "name": "Matemática",
+        "levels": [{"name": "Iniciante"}],
+        "skills": [{"name": "Trigonometria"}, {"name": "Equações"}],
+    }
+    created = await client.post(f"{API}/skill-groups", json=group, headers=auth(token))
+    assert created.status_code == 201, created.text
+    await client.post(
+        f"{API}/skill-groups",
+        json={**group, "skills": [{"name": "Segredo"}]},
+        headers=auth(other),
+    )
+    skill_ids = {s["name"]: s["id"] for s in created.json()["skills"]}
+    generator.questions = [
+        generated_question().model_copy(
+            update={"skills": ["Matemática / Trigonometria", "Matemática / Segredo"]}
+        )
+    ]
+
+    body = await generate(client, token, count=1)
+
+    assert body["questions"][0]["skill_ids"] == [skill_ids["Trigonometria"]]
+    labels = [skill.label for skill in generator.briefs[0].skills]
+    assert labels == ["Matemática / Trigonometria", "Matemática / Equações"]

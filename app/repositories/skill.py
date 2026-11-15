@@ -65,6 +65,15 @@ class SkillRepository(BaseRepository[Skill]):
         )
         return await self.session.scalar(stmt)
 
+    async def options_for_teacher(self, teacher_id: UUID) -> list[tuple[Skill, str]]:
+        stmt = (
+            select(Skill, SkillGroup.name)
+            .join(SkillGroup, SkillGroup.id == Skill.group_id)
+            .where(SkillGroup.teacher_id == teacher_id)
+            .order_by(SkillGroup.name, Skill.position)
+        )
+        return [(skill, group) for skill, group in (await self.session.execute(stmt)).all()]
+
     async def missing_for_teacher(self, teacher_id: UUID, ids: Iterable[UUID]) -> set[UUID]:
         wanted = set(ids)
         if not wanted:

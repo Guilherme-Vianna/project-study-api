@@ -150,6 +150,10 @@ def brief_message(brief: GenerationBrief, references: list[ReferenceQuestion]) -
         lines.append(f"Write {TYPE_TEXT[brief.type.value]}.")
     if brief.difficulty:
         lines.append(f"Difficulty: {brief.difficulty.value}.")
+    if brief.skills:
+        lines.append("")
+        lines.append("Teacher skills (fill each question's skills with the ones it trains):")
+        lines += [f"- {skill.label}" for skill in brief.skills]
     lines.append("")
     lines.append("Reference questions:")
     for number, reference in enumerate(references, 1):
