@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     exercises,
     images,
     invites,
+    question_bank,
     skills,
     students,
     study_plans,
@@ -24,3 +25,4 @@ api_router.include_router(images.router)
 api_router.include_router(study_plans.router)
 api_router.include_router(attempts.router)
 api_router.include_router(skills.router)
+api_router.include_router(question_bank.router)

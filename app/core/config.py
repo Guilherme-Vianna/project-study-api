@@ -54,6 +54,17 @@ class Settings(BaseSettings):
 
     study_timezone: str = "America/Sao_Paulo"
 
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    llm_temperature: float = 0.7
+    llm_timeout_seconds: int = 120
+    llm_extra_body: str | None = None
+    llm_fallback_provider: str | None = None
+    llm_fallback_model: str | None = None
+    llm_fallback_api_key: str | None = None
+    llm_fallback_extra_body: str | None = None
+
     redis_url: str | None = None
     cache_ttl_seconds: int = 600
     k_revision: str = "local"
@@ -78,6 +89,14 @@ class Settings(BaseSettings):
         "firebase_credentials_base64",
         "firebase_auth_emulator_host",
         "redis_url",
+        "llm_provider",
+        "llm_model",
+        "llm_api_key",
+        "llm_extra_body",
+        "llm_fallback_provider",
+        "llm_fallback_model",
+        "llm_fallback_api_key",
+        "llm_fallback_extra_body",
         mode="before",
     )
     @classmethod

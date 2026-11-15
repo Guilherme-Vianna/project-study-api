@@ -7,7 +7,21 @@ from uuid import uuid4
 
 from app.core.auth import AuthenticatedUser
 from app.core.cache import EPOCH_FIELD
-from app.core.exceptions import IdentityProviderError, StorageUnavailableError, UnauthorizedError
+from app.core.exceptions import (
+    IdentityProviderError,
+    QuestionGenerationFailedError,
+    StorageUnavailableError,
+    UnauthorizedError,
+)
+from app.core.question_generation import (
+    GeneratedOption,
+    GeneratedQuestion,
+    GenerationBrief,
+    QuestionCatalog,
+    QuestionFilters,
+    ReferenceQuestion,
+)
+from app.models.exercise import ExerciseType
 
 TOKEN_LIFETIME_SECONDS = 3600
 
@@ -95,3 +109,49 @@ class FakeResponseCache:
 
     def _versions(self) -> dict[str, str]:
         return {name: str(value) for name, value in self.versions.items()}
+
+
+def generated_question(
+    kind: ExerciseType = ExerciseType.MULTIPLE_CHOICE, number: int = 1
+) -> GeneratedQuestion:
+    multiple = kind is ExerciseType.MULTIPLE_CHOICE
+    return GeneratedQuestion(
+        type=kind,
+        title=f"Question {number}",
+        statement=f"Statement {number}",
+        options=[
+            GeneratedOption(text="Right", is_correct=True),
+            GeneratedOption(text="Wrong", is_correct=False),
+        ]
+        if multiple
+        else [],
+        expected_answer=None if multiple else "Answer",
+        explanation="Because",
+        subject="Matemática",
+        topic="Geometria",
+    )
+
+
+class FakeQuestionGenerator:
+    def __init__(self) -> None:
+        self.filters = QuestionFilters()
+        self.questions: list[GeneratedQuestion] | None = None
+        self.catalogs: list[QuestionCatalog] = []
+        self.briefs: list[GenerationBrief] = []
+        self.references: list[list[ReferenceQuestion]] = []
+        self.fail = False
+
+    async def choose_filters(self, prompt: str, catalog: QuestionCatalog) -> QuestionFilters:
+        self.catalogs.append(catalog)
+        return self.filters
+
+    async def generate(
+        self, brief: GenerationBrief, references: list[ReferenceQuestion]
+    ) -> list[GeneratedQuestion]:
+        if self.fail:
+            raise QuestionGenerationFailedError("The AI provider failed to generate questions")
+        self.briefs.append(brief)
+        self.references.append(references)
+        if self.questions is not None:
+            return self.questions
+        return [generated_question(number=n) for n in range(1, brief.count + 1)]
