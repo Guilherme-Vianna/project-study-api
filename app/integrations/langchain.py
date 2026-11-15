@@ -212,39 +212,45 @@ def model_name(model: BaseChatModel) -> str:
     return str(name).removeprefix("models/")
 
 
-async def logged_call(
-    step: str, runnable: Runnable, messages: list[BaseMessage], expected_model: str = ""
-) -> Any:
-    started = time.perf_counter()
-    try:
-        result = await runnable.ainvoke(messages)
-    except Exception as exc:
+Attempt = tuple[str, Runnable]
+
+
+async def logged_call(step: str, attempts: list[Attempt], messages: list[BaseMessage]) -> Any:
+    error: Exception | None = None
+    for index, (requested, runnable) in enumerate(attempts):
+        started = time.perf_counter()
+        try:
+            result = await runnable.ainvoke(messages)
+        except Exception as exc:
+            error = exc
+            log_event(
+                logger,
+                f"llm {step} failed",
+                level=logging.WARNING,
+                labels={"llm_step": step, "llm_status": "error", "llm_model": requested},
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                error=f"{type(exc).__name__}: {exc}"[:500],
+                next_model=attempts[index + 1][0] if index + 1 < len(attempts) else None,
+            )
+            continue
+        usage = usage_fields(result["raw"] if isinstance(result, dict) else result)
         log_event(
             logger,
-            f"llm {step} failed",
-            level=logging.WARNING,
-            labels={"llm_step": step, "llm_status": "error"},
+            f"llm {step}",
+            labels={
+                "llm_step": step,
+                "llm_status": "ok",
+                "llm_model": requested,
+                "llm_cache": "hit" if usage["cached_input_tokens"] else "miss",
+                "llm_fallback": "yes" if index else "no",
+            },
             duration_ms=round((time.perf_counter() - started) * 1000),
-            error=f"{type(exc).__name__}: {exc}"[:500],
+            served_model=usage.pop("model"),
+            **usage,
         )
-        raise
-    usage = usage_fields(result["raw"] if isinstance(result, dict) else result)
-    log_event(
-        logger,
-        f"llm {step}",
-        labels={
-            "llm_step": step,
-            "llm_status": "ok",
-            "llm_model": usage["model"],
-            "llm_cache": "hit" if usage["cached_input_tokens"] else "miss",
-            "llm_fallback": "yes"
-            if expected_model and expected_model not in usage["model"]
-            else "no",
-        },
-        duration_ms=round((time.perf_counter() - started) * 1000),
-        **usage,
-    )
-    return result
+        return result
+    assert error is not None
+    raise error
 
 
 def parsed_or_fail[T](result: Any, schema: type[T], detail: str) -> T:
@@ -258,18 +264,14 @@ class LangChainQuestionGenerator:
     def __init__(self, models: list[BaseChatModel]) -> None:
         self._models = models
 
-    def _runnable(
+    def _attempts(
         self, build: Callable[[BaseChatModel], Runnable], *, reviewer: bool = False
-    ) -> Runnable:
+    ) -> list[Attempt]:
         models = list(reversed(self._models)) if reviewer else self._models
-        primary, *fallbacks = [build(model) for model in models]
-        return primary.with_fallbacks(fallbacks) if fallbacks else primary
+        return [(model_name(model), build(model)) for model in models]
 
-    def _primary(self, *, reviewer: bool = False) -> str:
-        return model_name(self._models[-1] if reviewer else self._models[0])
-
-    def _structured(self, schema: type[BaseModel], *, reviewer: bool = False) -> Runnable:
-        return self._runnable(
+    def _structured(self, schema: type[BaseModel], *, reviewer: bool = False) -> list[Attempt]:
+        return self._attempts(
             lambda chat: chat.with_structured_output(
                 schema, method="function_calling", include_raw=True
             ),
@@ -278,10 +280,10 @@ class LangChainQuestionGenerator:
 
     async def choose_filters(self, prompt: str, catalog: QuestionCatalog) -> QuestionFilters:
         tool = search_tool(catalog)
-        model = self._runnable(lambda chat: chat.bind_tools([tool], tool_choice=SEARCH_TOOL))
+        model = self._attempts(lambda chat: chat.bind_tools([tool], tool_choice=SEARCH_TOOL))
         messages = [SystemMessage(FILTER_SYSTEM), HumanMessage(prompt)]
         try:
-            message = await logged_call("choose_filters", model, messages, self._primary())
+            message = await logged_call("choose_filters", model, messages)
         except Exception as exc:
             raise QuestionGenerationFailedError("The AI provider did not respond") from exc
         calls = getattr(message, "tool_calls", None) or []
@@ -294,9 +296,7 @@ class LangChainQuestionGenerator:
     ) -> list[GeneratedQuestion]:
         messages = [SystemMessage(GENERATE_SYSTEM), HumanMessage(brief_message(brief, references))]
         try:
-            result = await logged_call(
-                "generate", self._structured(GeneratedQuestionSet), messages, self._primary()
-            )
+            result = await logged_call("generate", self._structured(GeneratedQuestionSet), messages)
         except Exception as exc:
             raise QuestionGenerationFailedError(
                 "The AI provider failed to generate questions"
@@ -313,9 +313,7 @@ class LangChainQuestionGenerator:
     ) -> GeneratedQuestion:
         messages = revision_messages(brief, references, previous, feedback)
         try:
-            result = await logged_call(
-                "revise", self._structured(GeneratedQuestionSet), messages, self._primary()
-            )
+            result = await logged_call("revise", self._structured(GeneratedQuestionSet), messages)
         except Exception as exc:
             raise QuestionGenerationFailedError(
                 "The AI provider failed to revise the question"
@@ -330,7 +328,7 @@ class LangChainQuestionGenerator:
         messages = [SystemMessage(VERIFY_SYSTEM), HumanMessage(verification_message(question))]
         model = self._structured(Verification, reviewer=True)
         try:
-            result = await logged_call("verify", model, messages, self._primary(reviewer=True))
+            result = await logged_call("verify", model, messages)
         except Exception as exc:
             raise QuestionGenerationFailedError("The AI reviewer did not respond") from exc
         return parsed_or_fail(result, Verification, "The AI reviewer returned an invalid answer")
@@ -377,6 +375,11 @@ def build_chat_model(
     return init_chat_model(model, **options)
 
 
+def _shared_key() -> str | None:
+    same_provider = settings.llm_fallback_provider == settings.llm_provider
+    return settings.llm_api_key if same_provider else None
+
+
 def configured_models() -> list[BaseChatModel]:
     models = []
     if settings.llm_model:
@@ -393,7 +396,7 @@ def configured_models() -> list[BaseChatModel]:
             build_chat_model(
                 settings.llm_fallback_provider,
                 settings.llm_fallback_model,
-                settings.llm_fallback_api_key,
+                settings.llm_fallback_api_key or _shared_key(),
                 settings.llm_fallback_extra_body,
             )
         )

@@ -481,6 +481,27 @@ def test_models_are_built_primary_first(monkeypatch: pytest.MonkeyPatch) -> None
     assert fallback.extra_body == {"thinking": {"type": "disabled"}}
 
 
+def test_gemini_fallback_reuses_the_primary_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    from app.core.config import settings
+    from app.integrations.langchain import configured_models, model_name
+
+    monkeypatch.setattr(settings, "llm_provider", "google_genai")
+    monkeypatch.setattr(settings, "llm_model", "gemini-3.8-flash")
+    monkeypatch.setattr(settings, "llm_api_key", "gemini-key")
+    monkeypatch.setattr(settings, "llm_fallback_provider", "google_genai")
+    monkeypatch.setattr(settings, "llm_fallback_model", "gemini-3.5-flash")
+    monkeypatch.setattr(settings, "llm_fallback_api_key", None)
+    monkeypatch.setattr(settings, "llm_fallback_extra_body", None)
+
+    primary, fallback = configured_models()
+
+    assert isinstance(fallback, ChatGoogleGenerativeAI)
+    assert [model_name(primary), model_name(fallback)] == ["gemini-3.8-flash", "gemini-3.5-flash"]
+    assert fallback.google_api_key.get_secret_value() == "gemini-key"
+
+
 async def test_unconfigured_generator_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core.config import settings
     from app.core.exceptions import QuestionGeneratorUnavailableError
@@ -595,3 +616,34 @@ async def test_copy_of_a_bank_question_is_rewritten_then_discarded(
     assert "Muito parecida com uma questão que já existe no banco (ENEM 2020" in question["issue"]
     assert generator.verified == []
     assert len(generator.revisions) == 2
+
+
+async def test_logged_call_falls_back_and_labels_it(caplog: pytest.LogCaptureFixture) -> None:
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    from app.integrations.langchain import logged_call
+
+    def broken(_: object) -> AIMessage:
+        raise RuntimeError("quota exceeded")
+
+    reply = AIMessage(content="ok", response_metadata={"model_name": "gemini-3.6-flash"})
+    attempts = [
+        ("gemini-3.8-flash", RunnableLambda(broken)),
+        ("gemini-3.5-flash", RunnableLambda(lambda _: reply)),
+    ]
+
+    with caplog.at_level("INFO", logger="app.llm"):
+        assert await logged_call("verify", attempts, []) is reply
+
+    failed, ok = caplog.records
+    assert failed.labels == {
+        "llm_step": "verify",
+        "llm_status": "error",
+        "llm_model": "gemini-3.8-flash",
+    }
+    assert "quota exceeded" in failed.fields["error"]
+    assert failed.fields["next_model"] == "gemini-3.5-flash"
+    assert ok.labels["llm_fallback"] == "yes"
+    assert ok.labels["llm_model"] == "gemini-3.5-flash"
+    assert ok.fields["served_model"] == "gemini-3.6-flash"

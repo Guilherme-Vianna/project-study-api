@@ -132,8 +132,8 @@ jobs:
           LLM_EXTRA_BODY: ${{ vars.LLM_EXTRA_BODY }}
           LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || '0.7' }}
           LLM_TIMEOUT_SECONDS: ${{ vars.LLM_TIMEOUT_SECONDS || '120' }}
-          LLM_FALLBACK_PROVIDER: ${{ vars.LLM_FALLBACK_PROVIDER || 'deepseek' }}
-          LLM_FALLBACK_MODEL: ${{ vars.LLM_FALLBACK_MODEL || 'deepseek-flash' }}
+          LLM_FALLBACK_PROVIDER: ${{ vars.LLM_FALLBACK_PROVIDER || 'google_genai' }}
+          LLM_FALLBACK_MODEL: ${{ vars.LLM_FALLBACK_MODEL || 'gemini-3.5-flash' }}
           LLM_FALLBACK_API_KEY: ${{ secrets.LLM_FALLBACK_API_KEY }}
           LLM_FALLBACK_EXTRA_BODY: ${{ vars.LLM_FALLBACK_EXTRA_BODY }}
         run: |
