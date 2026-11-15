@@ -43,6 +43,7 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 - Question bank (`question_bank_items`; `python -m app.commands.import_question_bank <jsonl>`, upsert by `source_key`). Teachers: `GET .../catalog`, `POST .../generations[/stream]`, `POST .../generations/{id}/adjustments[/stream]` (SSE).
   LangGraph (`services/question_graph.py`): retrieve → generate → verify (malformed, `pg_trgm` ≥ 0.6 vs the bank, or a blind solve by the other model disagrees → rewrite ≤ 2, then discard) → `interrupt` for teacher review (≤ 5 adjustments per question).
   State in `AsyncPostgresSaver` (`integrations/langgraph.py`, `setup()` at startup, tables ignored by Alembic); nothing is saved as an exercise.
+  The teacher's skills go in the prompt; drafts return `skill_ids` matched to that teacher's skills only.
 - Unregistering purges the user's plans/assignments/attempts and skills first, then enrollments and content (then GCS objects).
 
 ## SCD Type 4
@@ -75,12 +76,11 @@ docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (
   listeners track tables read/written, writes bump table versions. Non-DB inputs: `track_read`/`track_write`/`cache_until`.
 - Endpoints parse input, call a service, map to schemas (all v1 routes need a bearer token). Services own rules,
   raise `AppError` subclasses (never `HTTPException`) and commit.
-- Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via
-  `get_aggregate` (selectinload + populate_existing; `exercise_aggregate_options` nests exercise loading).
+- Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via `get_aggregate` (selectinload + populate_existing; `exercise_aggregate_options`).
 - External services only via `IdentityProvider` / `ImageStorage` / `QuestionGenerator` (tests override the `get_*`; the
   checkpointer is an `InMemorySaver`). LLM: Gemini only via `init_chat_model`: `LLM_*` (gemini-3.8-flash generates), `LLM_FALLBACK_*`
   (gemini-3.5-flash, tried next with a logged `llm_fallback`; the verifier uses the list reversed; key defaults to `LLM_API_KEY`); no `LLM_MODEL` → 503.
-- Logs: `log_event` labels → Cloud Logging (`cache`, `llm_cache`, `llm_step`, `generation_id`, `graph_node`); `LOG_FORMAT=json` in Cloud Run.
+  Logs: `log_event` labels → Cloud Logging (`cache`, `llm_*`, `generation_id`, `graph_node`); `LOG_FORMAT=json` in Cloud Run.
 - New entity: model + `@versioned` → `models/__init__` → schema → repo → service → deps → endpoint → router → migration → tests.
 
 ## Commands

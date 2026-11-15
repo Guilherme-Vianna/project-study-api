@@ -24,6 +24,7 @@ from app.core.question_generation import (
     QuestionFilters,
     QuestionGenerator,
     ReferenceQuestion,
+    match_skills,
     verification_issues,
 )
 
@@ -52,6 +53,7 @@ class Draft(BaseModel):
     teacher_revisions: int = 0
     feedback: list[str] = Field(default_factory=list)
     issue: str | None = None
+    skill_ids: list[str] = Field(default_factory=list)
 
 
 class GenerationState(TypedDict, total=False):
@@ -133,7 +135,13 @@ def build_question_graph(
         brief, references, drafts = _brief(state), _references(state), drafts_of(state)
         if not drafts:
             questions = await generator.generate(brief, references)
-            drafts = [Draft(question=_shuffled(question)) for question in questions[: brief.count]]
+            drafts = [
+                Draft(
+                    question=_shuffled(question),
+                    skill_ids=match_skills(question.skills, brief.skills),
+                )
+                for question in questions[: brief.count]
+            ]
             if not drafts:
                 raise QuestionGenerationFailedError("The AI provider returned no question")
             return {"drafts": dump(drafts)}
@@ -153,6 +161,7 @@ def build_question_graph(
                 draft.issue = "Não foi possível refazer esta questão agora."
                 continue
             draft.question = _shuffled(result)
+            draft.skill_ids = match_skills(result.skills, brief.skills)
             draft.status = DraftStatus.PENDING
         return {"drafts": dump(drafts)}
 
