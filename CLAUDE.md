@@ -78,8 +78,8 @@ docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (
 - Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via
   `get_aggregate` (selectinload + populate_existing; `exercise_aggregate_options` nests exercise loading).
 - External services only via `IdentityProvider` / `ImageStorage` / `QuestionGenerator` (tests override the `get_*`; the
-  checkpointer is an `InMemorySaver`). LLM: `init_chat_model` with `LLM_*`, optional `LLM_FALLBACK_*` via
-  `with_fallbacks` (the verifier uses them reversed); no `LLM_MODEL` → 503.
+  checkpointer is an `InMemorySaver`). LLM: Gemini only via `init_chat_model`: `LLM_*` (gemini-3.8-flash generates), `LLM_FALLBACK_*`
+  (gemini-3.5-flash, tried next with a logged `llm_fallback`; the verifier uses the list reversed; key defaults to `LLM_API_KEY`); no `LLM_MODEL` → 503.
 - Logs: `log_event` labels → Cloud Logging (`cache`, `llm_cache`, `llm_step`, `generation_id`, `graph_node`); `LOG_FORMAT=json` in Cloud Run.
 - New entity: model + `@versioned` → `models/__init__` → schema → repo → service → deps → endpoint → router → migration → tests.
 
