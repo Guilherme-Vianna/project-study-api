@@ -16,6 +16,7 @@ from app.core.logging import log_event
 from app.core.question_generation import GeneratedQuestion, QuestionFilters, QuestionGenerator
 from app.models.question_bank import QuestionBankItem
 from app.repositories.question_bank import QuestionBankRepository
+from app.repositories.skill import SkillRepository
 from app.repositories.teacher import TeacherRepository
 from app.schemas.question_bank import (
     GeneratedDraftRead,
@@ -83,9 +84,13 @@ class QuestionBankService:
         teacher = await require_teacher(self.teachers, user)
         if (await self.items.count()) == 0:
             raise ConflictError("The question bank is empty")
+        skills = [
+            {"id": str(skill.id), "name": skill.name, "group": group}
+            for skill, group in await SkillRepository(self.session).options_for_teacher(teacher.id)
+        ]
         state = {
             "teacher_id": str(teacher.id),
-            "request": data.model_dump(mode="json"),
+            "request": {**data.model_dump(mode="json"), "skills": skills},
             "drafts": [],
         }
         return GenerationRun(uuid7(), teacher.id, state, "question generation finished", {})

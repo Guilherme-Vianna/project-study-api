@@ -1,3 +1,5 @@
+import unicodedata
+from difflib import get_close_matches
 from enum import StrEnum
 from typing import Protocol
 
@@ -54,11 +56,22 @@ class ReferenceQuestion(BaseModel):
     answer: str | None
 
 
+class SkillOption(BaseModel):
+    id: str
+    name: str
+    group: str
+
+    @property
+    def label(self) -> str:
+        return f"{self.group} / {self.name}"
+
+
 class GenerationBrief(BaseModel):
     prompt: str
     count: int
     type: ExerciseType | None
     difficulty: Difficulty | None
+    skills: list[SkillOption] = Field(default_factory=list)
 
 
 class GeneratedOption(BaseModel):
@@ -70,6 +83,11 @@ class GeneratedQuestion(BaseModel):
     type: ExerciseType
     subject: str
     topic: str
+    skills: list[str] = Field(
+        default_factory=list,
+        description="Teacher skills this question trains, written exactly as listed "
+        "('Group / Skill'); empty when none fits or no list is given",
+    )
     title: str = Field(description="Short title, at most 120 characters")
     statement: str = Field(description="Full self-contained statement, including any support text")
     explanation: str = Field(
@@ -160,3 +178,27 @@ class QuestionGenerator(Protocol):
     ) -> GeneratedQuestion: ...
 
     async def verify(self, question: GeneratedQuestion) -> Verification: ...
+
+
+SKILL_MATCH_CUTOFF = 0.85
+
+
+def _fold(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value.casefold())
+    return " ".join("".join(c for c in text if not unicodedata.combining(c)).split())
+
+
+def match_skills(names: list[str], options: list[SkillOption]) -> list[str]:
+    by_label = {_fold(option.label): option.id for option in options}
+    by_name: dict[str, list[str]] = {}
+    for option in options:
+        by_name.setdefault(_fold(option.name), []).append(option.id)
+    matched: list[str] = []
+    for name in names:
+        folded = _fold(name)
+        close = get_close_matches(folded, list(by_label), n=1, cutoff=SKILL_MATCH_CUTOFF)
+        if close:
+            matched.append(by_label[close[0]])
+        elif len(by_name.get(folded, [])) == 1:
+            matched.append(by_name[folded][0])
+    return list(dict.fromkeys(matched))

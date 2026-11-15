@@ -63,6 +63,7 @@ class GeneratedDraftRead(BaseModel):
     auto_fixes: int
     teacher_revisions: int
     issue: str | None
+    skill_ids: list[UUID]
     question: GeneratedQuestion
 
 
