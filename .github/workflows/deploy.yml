@@ -124,6 +124,16 @@ jobs:
           STUDY_TIMEZONE: ${{ vars.STUDY_TIMEZONE || 'America/Sao_Paulo' }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           CACHE_TTL_SECONDS: ${{ vars.CACHE_TTL_SECONDS || '600' }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'google_genai' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'gemini-3.8-flash' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_EXTRA_BODY: ${{ vars.LLM_EXTRA_BODY }}
+          LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || '0.7' }}
+          LLM_TIMEOUT_SECONDS: ${{ vars.LLM_TIMEOUT_SECONDS || '120' }}
+          LLM_FALLBACK_PROVIDER: ${{ vars.LLM_FALLBACK_PROVIDER || 'deepseek' }}
+          LLM_FALLBACK_MODEL: ${{ vars.LLM_FALLBACK_MODEL || 'deepseek-flash' }}
+          LLM_FALLBACK_API_KEY: ${{ secrets.LLM_FALLBACK_API_KEY }}
+          LLM_FALLBACK_EXTRA_BODY: ${{ vars.LLM_FALLBACK_EXTRA_BODY }}
         run: |
           jq -n \
             --arg ENVIRONMENT development \
@@ -141,6 +151,16 @@ jobs:
             --arg INVITE_BASE_URL "$INVITE_BASE_URL" \
             --arg IMAGE_MAX_BYTES "$IMAGE_MAX_BYTES" \
             --arg STUDY_TIMEZONE "$STUDY_TIMEZONE"             --arg REDIS_URL "$REDIS_URL"             --arg CACHE_TTL_SECONDS "$CACHE_TTL_SECONDS" \
+            --arg LLM_PROVIDER "$LLM_PROVIDER" \
+            --arg LLM_MODEL "$LLM_MODEL" \
+            --arg LLM_API_KEY "$LLM_API_KEY" \
+            --arg LLM_EXTRA_BODY "$LLM_EXTRA_BODY" \
+            --arg LLM_TEMPERATURE "$LLM_TEMPERATURE" \
+            --arg LLM_TIMEOUT_SECONDS "$LLM_TIMEOUT_SECONDS" \
+            --arg LLM_FALLBACK_PROVIDER "$LLM_FALLBACK_PROVIDER" \
+            --arg LLM_FALLBACK_MODEL "$LLM_FALLBACK_MODEL" \
+            --arg LLM_FALLBACK_API_KEY "$LLM_FALLBACK_API_KEY" \
+            --arg LLM_FALLBACK_EXTRA_BODY "$LLM_FALLBACK_EXTRA_BODY" \
             '$ARGS.named | map_values(gsub("^\\s+|\\s+$"; "")) | with_entries(select(.value != ""))' > "$RUNNER_TEMP/runtime-env.yaml"
 
       - name: Deploy Cloud Run service

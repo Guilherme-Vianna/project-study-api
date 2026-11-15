@@ -10,10 +10,16 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.integrations.firebase import get_identity_provider
 from app.integrations.gcs import get_image_storage
+from app.integrations.langchain import get_question_generator
 from app.integrations.redis import get_response_cache
 from app.main import app
 from app.models import Base
-from tests.fakes import FakeIdentityProvider, FakeImageStorage, FakeResponseCache
+from tests.fakes import (
+    FakeIdentityProvider,
+    FakeImageStorage,
+    FakeQuestionGenerator,
+    FakeResponseCache,
+)
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/app_test"
@@ -55,11 +61,17 @@ def cache() -> FakeResponseCache:
 
 
 @pytest.fixture
+def generator() -> FakeQuestionGenerator:
+    return FakeQuestionGenerator()
+
+
+@pytest.fixture
 async def client(
     session_factory: async_sessionmaker[AsyncSession],
     identity: FakeIdentityProvider,
     storage: FakeImageStorage,
     cache: FakeResponseCache,
+    generator: FakeQuestionGenerator,
 ) -> AsyncIterator[AsyncClient]:
     async def override_get_session() -> AsyncIterator[AsyncSession]:
         async with session_factory() as session:
@@ -69,6 +81,7 @@ async def client(
     app.dependency_overrides[get_identity_provider] = lambda: identity
     app.dependency_overrides[get_image_storage] = lambda: storage
     app.dependency_overrides[get_response_cache] = lambda: cache
+    app.dependency_overrides[get_question_generator] = lambda: generator
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()

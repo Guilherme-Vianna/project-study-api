@@ -52,6 +52,14 @@ class StorageUnavailableError(AppError):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
 
+class QuestionGeneratorUnavailableError(AppError):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+class QuestionGenerationFailedError(AppError):
+    status_code = status.HTTP_502_BAD_GATEWAY
+
+
 async def app_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, AppError)
     return JSONResponse(

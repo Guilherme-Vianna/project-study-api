@@ -7,15 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthenticatedUser, IdentityProvider
 from app.core.database import get_session
 from app.core.exceptions import UnauthorizedError
+from app.core.question_generation import QuestionGenerator
 from app.core.storage import ImageStorage
 from app.integrations.firebase import get_identity_provider
 from app.integrations.gcs import get_image_storage
+from app.integrations.langchain import get_question_generator
 from app.models.history import ACTOR_KEY
 from app.services.account import AccountService
 from app.services.attempt import AttemptService
 from app.services.enrollment import EnrollmentService
 from app.services.exercise import ExerciseService
 from app.services.image import ImageService
+from app.services.question_bank import QuestionBankService
 from app.services.skill import SkillService
 from app.services.student import StudentService
 from app.services.study_plan import StudyPlanService
@@ -27,6 +30,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 IdentityDep = Annotated[IdentityProvider, Depends(get_identity_provider)]
 StorageDep = Annotated[ImageStorage, Depends(get_image_storage)]
+GeneratorDep = Annotated[QuestionGenerator, Depends(get_question_generator)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
@@ -117,3 +121,12 @@ def get_skill_service(session: AuditedSessionDep) -> SkillService:
 
 
 SkillServiceDep = Annotated[SkillService, Depends(get_skill_service)]
+
+
+def get_question_bank_service(
+    session: AuditedSessionDep, generator: GeneratorDep
+) -> QuestionBankService:
+    return QuestionBankService(session, generator)
+
+
+QuestionBankServiceDep = Annotated[QuestionBankService, Depends(get_question_bank_service)]

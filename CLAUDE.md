@@ -8,9 +8,9 @@
 
 ## Project
 
-School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, Google Cloud Storage, Redis, Cloud Run.
+School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, Google Cloud Storage, Redis, Cloud Run, LangChain.
 
-- Python 3.14, uv (`package = false`), taskipy (`uv run task dev`); FastAPI, Pydantic v2, firebase-admin, google-cloud-storage, python-multipart, tzdata, redis
+- Python 3.14, uv (`package = false`), taskipy (`uv run task dev`); FastAPI, Pydantic v2, firebase-admin, google-cloud-storage, python-multipart, tzdata, redis, langchain (+ google-genai, deepseek)
 - SQLAlchemy 2.0 async + asyncpg, Alembic; primary keys are UUIDv7 via stdlib `uuid.uuid7`
 - Tests: pytest + pytest-asyncio (auto) + httpx against real Postgres (`app_test`); Firebase, GCS and Redis are faked
 
@@ -40,6 +40,10 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 - Skills: `skill_groups` own ordered `skill_levels` and `skills` (`PUT` syncs by id); `exercise_skills` tag exercises;
   teachers set enrolled students' `student_skills` level (timeline = history table); students only read them.
 - Delete guards (409): assigned plans, exercises with attempts, subjects in plans, images in exercises, used skills/levels.
+- Question bank (`question_bank_items`, global exam questions; `python -m app.commands.import_question_bank <jsonl>`,
+  upsert by `source_key`). Teachers: `GET /question-bank/catalog`, `POST /question-bank/generations`: the LLM picks
+  filters via a function call with catalog enums → 8 references (filters relaxed if empty) → structured output;
+  invalid/wrong-type questions dropped, options shuffled, nothing saved.
 - Unregistering purges the user's plans/assignments/attempts and skills first, then enrollments and content (then GCS objects).
 
 ## SCD Type 4
@@ -54,13 +58,13 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 
 ```
 app/
-  core/          config, database, auth (IdentityProvider), storage (ImageStorage), cache (ResponseCache), exceptions
-  integrations/  firebase.py (identity), gcs.py (image storage), redis.py (response cache)
+  core/          config, database, auth, storage, cache, question_generation (QuestionGenerator), exceptions
+  integrations/  firebase.py, gcs.py, redis.py, langchain.py (LLM); commands/ import_question_bank.py
   api/           deps, pagination (PaginationDep, to_page), health, cache (middleware), v1/endpoints/*
   models/ schemas/ services/ repositories/  one module per resource (profile, teacher, student, enrollment, subject,
                  image, exercise, study_plan, attempt, skill, ...) + helpers (base, history, types, common, role)
 alembic/         async env.py, versions/ (ruff post-write hooks)
-tests/           conftest, fakes (identity + storage), helpers, plan_scenario, one module per resource
+tests/           conftest, fakes (identity, storage, cache, LLM), helpers, plan_scenario, one module per resource
 docker/          postgres/init (app_test DB), gcs/ (emulator bucket seed)
 docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (API handoff for the frontend)
 .github/         workflows/deploy.yml (CI + Cloud Run deploy)
@@ -68,26 +72,23 @@ docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (
 
 ## Layer rules
 
-- CORS: `CORS_ORIGINS` (comma-separated, default `*`) feeds `CORSMiddleware` in `create_app`.
-- Response cache (`api/cache.py`, `core/cache.py`; off without `REDIS_URL`): v1 GET 200s keyed by token+path+query; ORM
+- CORS: `CORS_ORIGINS` (comma-separated, default `*`) → `CORSMiddleware`. Response cache (`api/cache.py`, `core/cache.py`; off without `REDIS_URL`): v1 GET 200s keyed by token+path+query; ORM
   listeners track tables read/written, writes bump table versions. Non-DB inputs: `track_read`/`track_write`/`cache_until`.
-- Endpoints parse input, call a service, map to schemas. All v1 routes need a bearer token.
-- Services own rules, raise `AppError` subclasses (never `HTTPException`) and commit.
+- Endpoints parse input, call a service, map to schemas (all v1 routes need a bearer token). Services own rules,
+  raise `AppError` subclasses (never `HTTPException`) and commit.
 - Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via
   `get_aggregate` (selectinload + populate_existing; `exercise_aggregate_options` nests exercise loading).
-- External services only via `IdentityProvider` / `ImageStorage`; tests override `get_identity_provider`/`get_image_storage`.
-- New entity: model + `@versioned` → `models/__init__` → schema → repository → service → deps → endpoint → router →
-  migration → tests.
+- External services only via `IdentityProvider` / `ImageStorage` / `QuestionGenerator` (tests override the `get_*`).
+  LLM: `init_chat_model` with `LLM_*`, optional `LLM_FALLBACK_*` via `with_fallbacks`; no `LLM_MODEL` → 503.
+- New entity: model + `@versioned` → `models/__init__` → schema → repo → service → deps → endpoint → router → migration → tests.
 
 ## Commands
 
 ```bash
 docker compose up -d db gcs
-uv sync
-uv run alembic upgrade head
+uv sync && uv run alembic upgrade head
 uv run task dev
-uv run pytest
-uv run ruff check . && uv run ruff format .
+uv run pytest && uv run ruff check . && uv run ruff format .
 uv run alembic revision --autogenerate -m "message" && uv run alembic check
 ```
 
@@ -96,5 +97,4 @@ uv run alembic revision --autogenerate -m "message" && uv run alembic check
 - GitHub Actions: PRs run lint + tests + `alembic check`; pushes to `main` build → Artifact Registry → deploy → smoke
   test. The app creates the database if missing and migrates on startup (`app/core/migrations.py`, lifespan; `RUN_MIGRATIONS_ON_STARTUP`). Auth via SA key secret `GCP_CREDENTIALS`; `DATABASE_URL` secret (Neon);
   config in `development` environment vars (`docs/deployment.md`). New runtime env vars go into the workflow's jq env file.
-- `DATABASE_URL` accepts provider URLs (`postgresql://…?sslmode=…&channel_binding=…`); `Settings` normalizes for asyncpg.
-- `Dockerfile`: multi-stage uv, `python:3.14-slim`, non-root, `$PORT`; no BuildKit-only features.
+- `DATABASE_URL` accepts provider URLs (`postgresql://…?sslmode=…&channel_binding=…`); `Settings` normalizes for asyncpg. `Dockerfile`: multi-stage uv, `python:3.14-slim`, non-root, `$PORT`; no BuildKit-only features.

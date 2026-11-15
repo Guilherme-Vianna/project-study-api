@@ -13,6 +13,7 @@ from app.models.exercise import (
 from app.models.history import HistoryOperation, versioned
 from app.models.image import Image
 from app.models.invite import TeacherInvite
+from app.models.question_bank import QuestionBankItem
 from app.models.skill import Skill, SkillGroup, SkillLevel, StudentSkill
 from app.models.student import Student
 from app.models.study_plan import StudyPlan, StudyPlanAssignment, StudyPlanSubject, Weekday
@@ -32,6 +33,7 @@ __all__ = [
     "HistoryOperation",
     "Image",
     "ImagePlacement",
+    "QuestionBankItem",
     "ReviewStatus",
     "Skill",
     "SkillGroup",
