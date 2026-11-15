@@ -2,6 +2,7 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -10,9 +11,11 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.cache import EPOCH_FIELD, CacheTracker, ResponseCache, current_tracker
 from app.core.config import settings
+from app.core.logging import log_event
 from app.integrations.redis import get_response_cache
 
 HIT_HEADER = (b"x-cache", b"HIT")
+logger = logging.getLogger("app.cache")
 CACHEABLE_STATUS = 200
 
 
@@ -92,11 +95,13 @@ class ResponseCacheMiddleware:
         token = bearer_token(scope)
         key = entry_key(scope, token) if scope["method"] == "GET" and token else None
         versions: dict[str, str] | None = None
+        started = time.perf_counter()
         if key is not None:
             entry, versions = await cache.lookup(key)
             cached = decode_entry(entry, versions) if entry and versions else None
             if cached is not None:
                 await self._send_cached(send, *cached)
+                _log(scope, "hit", started, status=cached[0])
                 return
 
         tracker = CacheTracker()
@@ -109,6 +114,13 @@ class ResponseCacheMiddleware:
             if pending:
                 invalidated.update(pending)
                 await cache.invalidate(pending)
+                log_event(
+                    logger,
+                    "response cache invalidated",
+                    labels={"cache": "invalidate"},
+                    path=scope["path"],
+                    tables=sorted(pending),
+                )
 
         async def capture(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -126,9 +138,12 @@ class ResponseCacheMiddleware:
             await invalidate()
 
         if key is None or token is None or versions is None:
+            if scope["method"] == "GET":
+                _log(scope, "bypass", started, status=response["status"], reason="no_cache_key")
             return
         ttl = self._ttl(tracker, token)
         if response["status"] != CACHEABLE_STATUS or not self._storable(tracker) or ttl <= 0:
+            _log(scope, "miss", started, status=response["status"], stored=False)
             return
         dependencies = {name: versions.get(name, "0") for name in tracker.reads}
         dependencies[EPOCH_FIELD] = versions[EPOCH_FIELD]
@@ -136,6 +151,7 @@ class ResponseCacheMiddleware:
             response["status"], response["headers"], bytes(response["body"]), dependencies
         )
         await cache.store(key, entry, ttl)
+        _log(scope, "miss", started, status=response["status"], stored=True, ttl_seconds=ttl)
 
     @staticmethod
     def _storable(tracker: CacheTracker) -> bool:
@@ -160,3 +176,16 @@ class ResponseCacheMiddleware:
         headers = [*headers, HIT_HEADER]
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": body})
+
+
+def _log(scope: Scope, outcome: str, started: float, **fields: Any) -> None:
+    log_event(
+        logger,
+        f"response cache {outcome}",
+        level=logging.DEBUG if outcome == "bypass" else logging.INFO,
+        labels={"cache": outcome},
+        method=scope["method"],
+        path=scope["path"],
+        duration_ms=round((time.perf_counter() - started) * 1000, 1),
+        **fields,
+    )

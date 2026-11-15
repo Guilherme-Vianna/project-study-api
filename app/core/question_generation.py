@@ -7,6 +7,7 @@ from app.models.exercise import ExerciseType
 
 MIN_OPTIONS = 2
 MAX_OPTIONS = 10
+MAX_SOLUTION_CHARS = 800
 
 
 class Difficulty(StrEnum):
@@ -92,9 +93,55 @@ class GeneratedQuestion(BaseModel):
             return MIN_OPTIONS <= len(self.options) <= MAX_OPTIONS and correct == 1
         return not self.options and bool(self.expected_answer and self.expected_answer.strip())
 
+    def correct_letter(self) -> str | None:
+        for index, option in enumerate(self.options):
+            if option.is_correct:
+                return option_letter(index)
+        return None
+
 
 class GeneratedQuestionSet(BaseModel):
     questions: list[GeneratedQuestion]
+
+
+class Verification(BaseModel):
+    solution: str = Field(description="Your own step-by-step solution in Brazilian Portuguese")
+    chosen_option: str | None = Field(
+        default=None,
+        description="multiple_choice only: the letter of the option your solution reaches",
+    )
+    answer_is_correct: bool | None = Field(
+        default=None, description="open_answer only: whether the proposed answer is correct"
+    )
+    issues: list[str] = Field(
+        default_factory=list,
+        description="Only problems that make the question wrong, ambiguous, unsolvable or not "
+        "self-contained, in Brazilian Portuguese; empty when the question is fine",
+    )
+
+
+def option_letter(index: int) -> str:
+    return chr(ord("A") + index)
+
+
+def verification_issues(question: GeneratedQuestion, verification: Verification) -> list[str]:
+    issues = [issue.strip() for issue in verification.issues if issue.strip()]
+    solution = verification.solution.strip()[:MAX_SOLUTION_CHARS]
+    if question.type is ExerciseType.MULTIPLE_CHOICE:
+        chosen = (verification.chosen_option or "").strip().upper()[:1] or None
+        correct = question.correct_letter()
+        if chosen != correct:
+            issues.append(
+                f"Um revisor independente resolveu a questão e chegou à alternativa "
+                f"{chosen or 'nenhuma'}, mas a marcada como correta é a {correct}. "
+                f"Resolução do revisor: {solution}"
+            )
+    elif verification.answer_is_correct is False:
+        issues.append(
+            "Um revisor independente considerou a resposta esperada incorreta. "
+            f"Resolução do revisor: {solution}"
+        )
+    return issues
 
 
 class QuestionGenerator(Protocol):
@@ -103,3 +150,13 @@ class QuestionGenerator(Protocol):
     async def generate(
         self, brief: GenerationBrief, references: list[ReferenceQuestion]
     ) -> list[GeneratedQuestion]: ...
+
+    async def revise(
+        self,
+        brief: GenerationBrief,
+        references: list[ReferenceQuestion],
+        previous: GeneratedQuestion,
+        feedback: list[str],
+    ) -> GeneratedQuestion: ...
+
+    async def verify(self, question: GeneratedQuestion) -> Verification: ...

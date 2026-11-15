@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.database import SessionLocal
+from app.integrations.redis import get_response_cache
 from app.models.history import ACTOR_KEY
 from app.models.question_bank import QuestionBankItem
 from app.repositories.question_bank import QuestionBankRepository
@@ -43,6 +44,9 @@ async def import_lines(lines: list[str]) -> tuple[int, int]:
             if number % BATCH == 0:
                 await session.commit()
         await session.commit()
+    cache = get_response_cache()
+    if cache is not None:
+        await cache.invalidate([QuestionBankItem.__tablename__])
     return created, updated
 
 

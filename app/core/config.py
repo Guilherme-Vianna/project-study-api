@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     cache_ttl_seconds: int = 600
     k_revision: str = "local"
+    log_level: str = "INFO"
+    log_format: str = "text"
 
     @model_validator(mode="before")
     @classmethod
