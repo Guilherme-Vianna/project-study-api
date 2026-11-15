@@ -67,3 +67,15 @@ class QuestionBankRepository(BaseRepository[QuestionBankItem]):
             .limit(limit)
         )
         return (await self.session.scalars(stmt)).all()
+
+    async def most_similar(
+        self, statement: str, subject: str
+    ) -> tuple[QuestionBankItem, float] | None:
+        item = QuestionBankItem
+        score = func.similarity(item.statement, statement).label("score")
+        row = (
+            await self.session.execute(
+                select(item, score).where(item.subject == subject).order_by(score.desc()).limit(1)
+            )
+        ).first()
+        return (row[0], float(row[1])) if row else None

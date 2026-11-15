@@ -20,6 +20,7 @@ from app.core.question_generation import (
     QuestionCatalog,
     QuestionFilters,
     ReferenceQuestion,
+    Verification,
 )
 from app.models.exercise import ExerciseType
 
@@ -140,6 +141,10 @@ class FakeQuestionGenerator:
         self.briefs: list[GenerationBrief] = []
         self.references: list[list[ReferenceQuestion]] = []
         self.fail = False
+        self.verdicts: list[Verification] = []
+        self.revisions: list[tuple[str, list[str]]] = []
+        self.verified: list[str] = []
+        self.revise_fails = False
 
     async def choose_filters(self, prompt: str, catalog: QuestionCatalog) -> QuestionFilters:
         self.catalogs.append(catalog)
@@ -155,3 +160,31 @@ class FakeQuestionGenerator:
         if self.questions is not None:
             return self.questions
         return [generated_question(number=n) for n in range(1, brief.count + 1)]
+
+    async def revise(
+        self,
+        brief: GenerationBrief,
+        references: list[ReferenceQuestion],
+        previous: GeneratedQuestion,
+        feedback: list[str],
+    ) -> GeneratedQuestion:
+        if self.revise_fails:
+            raise QuestionGenerationFailedError("The AI provider failed to revise the question")
+        self.revisions.append((previous.title, feedback))
+        return previous.model_copy(update={"title": f"{previous.title} (revised)"})
+
+    async def verify(self, question: GeneratedQuestion) -> Verification:
+        self.verified.append(question.title)
+        if self.verdicts:
+            return self.verdicts.pop(0)
+        return pass_verdict(question)
+
+
+def pass_verdict(question: GeneratedQuestion) -> Verification:
+    return Verification(
+        solution="ok", chosen_option=question.correct_letter(), answer_is_correct=True
+    )
+
+
+def fail_verdict(issue: str = "Ambígua") -> Verification:
+    return Verification(solution="no", chosen_option="Z", answer_is_correct=False, issues=[issue])

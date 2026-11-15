@@ -3,6 +3,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from langgraph.checkpoint.memory import InMemorySaver
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -11,6 +13,7 @@ from app.core.database import get_session
 from app.integrations.firebase import get_identity_provider
 from app.integrations.gcs import get_image_storage
 from app.integrations.langchain import get_question_generator
+from app.integrations.langgraph import get_checkpointer
 from app.integrations.redis import get_response_cache
 from app.main import app
 from app.models import Base
@@ -30,6 +33,7 @@ TEST_DATABASE_URL = os.getenv(
 async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     async with engine.begin() as connection:
+        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await connection.run_sync(Base.metadata.drop_all)
         await connection.run_sync(Base.metadata.create_all)
     yield async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
@@ -82,6 +86,8 @@ async def client(
     app.dependency_overrides[get_image_storage] = lambda: storage
     app.dependency_overrides[get_response_cache] = lambda: cache
     app.dependency_overrides[get_question_generator] = lambda: generator
+    checkpointer = InMemorySaver()
+    app.dependency_overrides[get_checkpointer] = lambda: checkpointer
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
     app.dependency_overrides.clear()

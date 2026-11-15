@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthenticatedUser, IdentityProvider
@@ -12,6 +13,7 @@ from app.core.storage import ImageStorage
 from app.integrations.firebase import get_identity_provider
 from app.integrations.gcs import get_image_storage
 from app.integrations.langchain import get_question_generator
+from app.integrations.langgraph import get_checkpointer
 from app.models.history import ACTOR_KEY
 from app.services.account import AccountService
 from app.services.attempt import AttemptService
@@ -31,6 +33,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 IdentityDep = Annotated[IdentityProvider, Depends(get_identity_provider)]
 StorageDep = Annotated[ImageStorage, Depends(get_image_storage)]
 GeneratorDep = Annotated[QuestionGenerator, Depends(get_question_generator)]
+CheckpointerDep = Annotated[BaseCheckpointSaver, Depends(get_checkpointer)]
 CredentialsDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
 
 
@@ -124,9 +127,9 @@ SkillServiceDep = Annotated[SkillService, Depends(get_skill_service)]
 
 
 def get_question_bank_service(
-    session: AuditedSessionDep, generator: GeneratorDep
+    session: AuditedSessionDep, generator: GeneratorDep, checkpointer: CheckpointerDep
 ) -> QuestionBankService:
-    return QuestionBankService(session, generator)
+    return QuestionBankService(session, generator, checkpointer)
 
 
 QuestionBankServiceDep = Annotated[QuestionBankService, Depends(get_question_bank_service)]

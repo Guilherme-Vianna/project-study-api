@@ -40,10 +40,9 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 - Skills: `skill_groups` own ordered `skill_levels` and `skills` (`PUT` syncs by id); `exercise_skills` tag exercises;
   teachers set enrolled students' `student_skills` level (timeline = history table); students only read them.
 - Delete guards (409): assigned plans, exercises with attempts, subjects in plans, images in exercises, used skills/levels.
-- Question bank (`question_bank_items`, global exam questions; `python -m app.commands.import_question_bank <jsonl>`,
-  upsert by `source_key`). Teachers: `GET /question-bank/catalog`, `POST /question-bank/generations`: the LLM picks
-  filters via a function call with catalog enums → 8 references (filters relaxed if empty) → structured output;
-  invalid/wrong-type questions dropped, options shuffled, nothing saved.
+- Question bank (`question_bank_items`; `python -m app.commands.import_question_bank <jsonl>`, upsert by `source_key`). Teachers: `GET .../catalog`, `POST .../generations[/stream]`, `POST .../generations/{id}/adjustments[/stream]` (SSE).
+  LangGraph (`services/question_graph.py`): retrieve → generate → verify (malformed, `pg_trgm` ≥ 0.6 vs the bank, or a blind solve by the other model disagrees → rewrite ≤ 2, then discard) → `interrupt` for teacher review (≤ 5 adjustments per question).
+  State in `AsyncPostgresSaver` (`integrations/langgraph.py`, `setup()` at startup, tables ignored by Alembic); nothing is saved as an exercise.
 - Unregistering purges the user's plans/assignments/attempts and skills first, then enrollments and content (then GCS objects).
 
 ## SCD Type 4
@@ -58,8 +57,8 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 
 ```
 app/
-  core/          config, database, auth, storage, cache, question_generation (QuestionGenerator), exceptions
-  integrations/  firebase.py, gcs.py, redis.py, langchain.py (LLM); commands/ import_question_bank.py
+  core/          config, database, auth, storage, cache, question_generation, logging (Cloud JSON), exceptions
+  integrations/  firebase.py, gcs.py, redis.py, langchain.py (LLM), langgraph.py; commands/ import_question_bank.py
   api/           deps, pagination (PaginationDep, to_page), health, cache (middleware), v1/endpoints/*
   models/ schemas/ services/ repositories/  one module per resource (profile, teacher, student, enrollment, subject,
                  image, exercise, study_plan, attempt, skill, ...) + helpers (base, history, types, common, role)
@@ -78,16 +77,17 @@ docs/            deployment.md (one-time GCP/GitHub setup), frontend-prompt.md (
   raise `AppError` subclasses (never `HTTPException`) and commit.
 - Repositories only touch the session; never commit. Relationships are `viewonly`, `lazy="raise"`; load aggregates via
   `get_aggregate` (selectinload + populate_existing; `exercise_aggregate_options` nests exercise loading).
-- External services only via `IdentityProvider` / `ImageStorage` / `QuestionGenerator` (tests override the `get_*`).
-  LLM: `init_chat_model` with `LLM_*`, optional `LLM_FALLBACK_*` via `with_fallbacks`; no `LLM_MODEL` → 503.
+- External services only via `IdentityProvider` / `ImageStorage` / `QuestionGenerator` (tests override the `get_*`; the
+  checkpointer is an `InMemorySaver`). LLM: `init_chat_model` with `LLM_*`, optional `LLM_FALLBACK_*` via
+  `with_fallbacks` (the verifier uses them reversed); no `LLM_MODEL` → 503.
+- Logs: `log_event` labels → Cloud Logging (`cache`, `llm_cache`, `llm_step`, `generation_id`, `graph_node`); `LOG_FORMAT=json` in Cloud Run.
 - New entity: model + `@versioned` → `models/__init__` → schema → repo → service → deps → endpoint → router → migration → tests.
 
 ## Commands
 
 ```bash
 docker compose up -d db gcs
-uv sync && uv run alembic upgrade head
-uv run task dev
+uv sync && uv run alembic upgrade head && uv run task dev
 uv run pytest && uv run ruff check . && uv run ruff format .
 uv run alembic revision --autogenerate -m "message" && uv run alembic check
 ```
