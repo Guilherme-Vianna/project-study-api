@@ -1,12 +1,19 @@
+from copy import deepcopy
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models import Exercise, ExerciseImage, ExerciseOption, ExerciseSubject
+from app.models import (
+    Exercise,
+    ExerciseImage,
+    ExerciseOption,
+    ExerciseQuestion,
+    ExerciseSubject,
+)
 from tests.fakes import FakeIdentityProvider, FakeImageStorage
-from tests.helpers import API, auth, history_rows, register, upload_image
+from tests.helpers import API, auth, exercise_payload, history_rows, register, upload_image
 
 EXERCISES_URL = f"{API}/exercises"
 
@@ -30,8 +37,12 @@ def multiple_choice(**overrides: Any) -> dict[str, Any]:
     }
 
 
+def to_api(payload: dict[str, Any]) -> dict[str, Any]:
+    return exercise_payload(**deepcopy(payload))
+
+
 async def create_exercise(client: AsyncClient, token: str, payload: dict[str, Any]) -> dict:
-    response = await client.post(EXERCISES_URL, json=payload, headers=auth(token))
+    response = await client.post(EXERCISES_URL, json=to_api(payload), headers=auth(token))
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -63,15 +74,15 @@ async def test_create_open_answer_exercise_with_subjects_and_images(
         },
     )
 
-    assert exercise["type"] == "open_answer"
-    assert exercise["expected_answer"] == "It is a parabola."
+    assert exercise["questions"][0]["type"] == "open_answer"
+    assert exercise["questions"][0]["expected_answer"] == "It is a parabola."
     assert [subject["name"] for subject in exercise["subjects"]] == ["Algebra", "Functions"]
     assert [(item["placement"], item["position"]) for item in exercise["images"]] == [
         ("statement", 0),
         ("attachment", 1),
     ]
     assert exercise["images"][0]["image"]["url"] == figure["url"]
-    assert exercise["options"] == []
+    assert exercise["questions"][0]["options"] == []
     assert len(await history_rows(session_factory, Exercise)) == 1
     assert len(await history_rows(session_factory, ExerciseSubject)) == 2
     assert len(await history_rows(session_factory, ExerciseImage)) == 2
@@ -87,10 +98,15 @@ async def test_create_multiple_choice_exercise(
 
     exercise = await create_exercise(client, token, payload)
 
-    assert [option["position"] for option in exercise["options"]] == [0, 1, 2, 3]
-    assert [option["is_correct"] for option in exercise["options"]] == [False, True, False, False]
-    assert exercise["options"][3]["text"] is None
-    assert exercise["options"][3]["image"]["id"] == image["id"]
+    assert [option["position"] for option in exercise["questions"][0]["options"]] == [0, 1, 2, 3]
+    assert [option["is_correct"] for option in exercise["questions"][0]["options"]] == [
+        False,
+        True,
+        False,
+        False,
+    ]
+    assert exercise["questions"][0]["options"][3]["text"] is None
+    assert exercise["questions"][0]["options"][3]["image"]["id"] == image["id"]
 
 
 @pytest.mark.parametrize(
@@ -109,7 +125,7 @@ async def test_rejects_invalid_exercises(
     client: AsyncClient, identity: FakeIdentityProvider, payload: dict[str, Any]
 ) -> None:
     token, _ = await register(client, identity, "teacher-1", "teacher")
-    response = await client.post(EXERCISES_URL, json=payload, headers=auth(token))
+    response = await client.post(EXERCISES_URL, json=to_api(payload), headers=auth(token))
     assert response.status_code == 422
 
 
@@ -122,16 +138,18 @@ async def test_rejects_duplicate_references(
 
     duplicate_subjects = await client.post(
         EXERCISES_URL,
-        json={"type": "open_answer", "title": "x", "subject_ids": [subject, subject]},
+        json=to_api({"type": "open_answer", "title": "x", "subject_ids": [subject, subject]}),
         headers=auth(token),
     )
     duplicate_images = await client.post(
         EXERCISES_URL,
-        json={
-            "type": "open_answer",
-            "title": "x",
-            "images": [{"image_id": image["id"]}, {"image_id": image["id"]}],
-        },
+        json=to_api(
+            {
+                "type": "open_answer",
+                "title": "x",
+                "images": [{"image_id": image["id"]}, {"image_id": image["id"]}],
+            }
+        ),
         headers=auth(token),
     )
 
@@ -149,13 +167,15 @@ async def test_cannot_reference_another_teachers_subjects_or_images(
 
     with_subject = await client.post(
         EXERCISES_URL,
-        json={"type": "open_answer", "title": "x", "subject_ids": [foreign_subject]},
+        json=to_api({"type": "open_answer", "title": "x", "subject_ids": [foreign_subject]}),
         headers=auth(token),
     )
     with_option_image = await client.post(
         EXERCISES_URL,
-        json=multiple_choice(
-            options=[{"text": "a", "is_correct": True}, {"image_id": foreign_image["id"]}]
+        json=to_api(
+            multiple_choice(
+                options=[{"text": "a", "is_correct": True}, {"image_id": foreign_image["id"]}]
+            )
         ),
         headers=auth(token),
     )
@@ -168,7 +188,7 @@ async def test_only_teachers_manage_exercises(
     client: AsyncClient, identity: FakeIdentityProvider
 ) -> None:
     token, _ = await register(client, identity, "student-1", "student")
-    response = await client.post(EXERCISES_URL, json=multiple_choice(), headers=auth(token))
+    response = await client.post(EXERCISES_URL, json=to_api(multiple_choice()), headers=auth(token))
     assert response.status_code == 403
 
 
@@ -190,15 +210,17 @@ async def test_replace_updates_children_in_place(
             images=[{"image_id": first["id"]}, {"image_id": second["id"]}],
         ),
     )
-    option_ids = [option["id"] for option in exercise["options"]]
+    option_ids = [option["id"] for option in exercise["questions"][0]["options"]]
 
     response = await client.put(
         f"{EXERCISES_URL}/{exercise['id']}",
-        json=multiple_choice(
-            title="What is 2 + 3?",
-            options=[{"text": "3"}, {"text": "5", "is_correct": True}],
-            subject_ids=[geometry],
-            images=[{"image_id": second["id"], "placement": "statement"}],
+        json=to_api(
+            multiple_choice(
+                title="What is 2 + 3?",
+                options=[{"text": "3"}, {"text": "5", "is_correct": True}],
+                subject_ids=[geometry],
+                images=[{"image_id": second["id"], "placement": "statement"}],
+            )
         ),
         headers=auth(token),
     )
@@ -206,8 +228,8 @@ async def test_replace_updates_children_in_place(
     updated = response.json()
     assert response.status_code == 200
     assert updated["title"] == "What is 2 + 3?"
-    assert [option["id"] for option in updated["options"]] == option_ids[:2]
-    assert [option["text"] for option in updated["options"]] == ["3", "5"]
+    assert [option["id"] for option in updated["questions"][0]["options"]] == option_ids[:2]
+    assert [option["text"] for option in updated["questions"][0]["options"]] == ["3", "5"]
     assert [subject["name"] for subject in updated["subjects"]] == ["Geometry"]
     images = [
         (item["image"]["id"], item["placement"], item["position"]) for item in updated["images"]
@@ -229,12 +251,12 @@ async def test_replace_can_switch_exercise_type(
 
     response = await client.put(
         f"{EXERCISES_URL}/{exercise['id']}",
-        json={"type": "open_answer", "title": "Explain 2 + 2", "expected_answer": "4"},
+        json=to_api({"type": "open_answer", "title": "Explain 2 + 2", "expected_answer": "4"}),
         headers=auth(token),
     )
 
-    assert response.json()["type"] == "open_answer"
-    assert response.json()["options"] == []
+    assert response.json()["questions"][0]["type"] == "open_answer"
+    assert response.json()["questions"][0]["options"] == []
 
 
 async def test_list_filters_by_subject_and_type(
@@ -308,3 +330,74 @@ async def test_unregistering_teacher_purges_content_and_objects(
     assert storage.objects == {}
     exercise_ops = [row["operation"] for row in await history_rows(session_factory, Exercise)]
     assert exercise_ops == ["insert", "delete"]
+
+
+def several_questions() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "multiple_choice",
+            "statement": "Which is a verb?",
+            "options": [{"text": "run", "is_correct": True}, {"text": "table"}],
+        },
+        {"type": "open_answer", "statement": "Translate 'gato'.", "expected_answer": "cat"},
+        {
+            "type": "multiple_choice",
+            "statement": "Pick the plural.",
+            "options": [{"text": "mice", "is_correct": True}, {"text": "mouse"}],
+        },
+    ]
+
+
+async def test_exercise_holds_several_questions(
+    client: AsyncClient,
+    identity: FakeIdentityProvider,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    token, _ = await register(client, identity, "teacher-1", "teacher")
+    response = await client.post(
+        EXERCISES_URL,
+        json={
+            "title": "Nivelamento",
+            "statement": "Read the text.",
+            "questions": several_questions(),
+        },
+        headers=auth(token),
+    )
+
+    exercise = response.json()
+    assert response.status_code == 201
+    assert exercise["statement"] == "Read the text."
+    assert [q["position"] for q in exercise["questions"]] == [0, 1, 2]
+    assert [q["type"] for q in exercise["questions"]] == [
+        "multiple_choice",
+        "open_answer",
+        "multiple_choice",
+    ]
+    assert exercise["questions"][1]["expected_answer"] == "cat"
+    assert len(await history_rows(session_factory, ExerciseQuestion)) == 3
+
+    first_ids = [q["id"] for q in exercise["questions"]]
+    replaced = await client.put(
+        f"{EXERCISES_URL}/{exercise['id']}",
+        json={"title": "Nivelamento", "questions": several_questions()[:2]},
+        headers=auth(token),
+    )
+    assert replaced.status_code == 200
+    assert [q["id"] for q in replaced.json()["questions"]] == first_ids[:2]
+    question_ops = [
+        row["operation"] for row in await history_rows(session_factory, ExerciseQuestion)
+    ]
+    assert question_ops.count("delete") == 1
+
+    by_type = await client.get(EXERCISES_URL, params={"type": "open_answer"}, headers=auth(token))
+    assert [item["id"] for item in by_type.json()["items"]] == [exercise["id"]]
+
+
+async def test_exercise_needs_at_least_one_question(
+    client: AsyncClient, identity: FakeIdentityProvider
+) -> None:
+    token, _ = await register(client, identity, "teacher-1", "teacher")
+    response = await client.post(
+        EXERCISES_URL, json={"title": "Empty", "questions": []}, headers=auth(token)
+    )
+    assert response.status_code == 422

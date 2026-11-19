@@ -9,6 +9,7 @@ from app.models.exercise import (
     Exercise,
     ExerciseImage,
     ExerciseOption,
+    ExerciseQuestion,
     ExerciseSkill,
     ExerciseSubject,
     ExerciseType,
@@ -18,18 +19,21 @@ from app.repositories.attempt import AttemptRepository
 from app.repositories.exercise import (
     ExerciseImageRepository,
     ExerciseOptionRepository,
+    ExerciseQuestionRepository,
     ExerciseRepository,
     ExerciseSkillRepository,
     ExerciseSubjectRepository,
 )
 from app.repositories.image import ImageRepository
+from app.repositories.package import PackageItemRepository
 from app.repositories.skill import SkillRepository
 from app.repositories.subject import SubjectRepository
 from app.repositories.teacher import TeacherRepository
-from app.schemas.exercise import ExerciseWrite
+from app.schemas.exercise import ExerciseQuestionWrite, ExerciseWrite
 from app.services.common import require_teacher
 
-SCALAR_FIELDS = ("type", "title", "statement", "expected_answer", "estimated_hours")
+SCALAR_FIELDS = ("title", "statement", "estimated_hours")
+QUESTION_FIELDS = ("type", "statement", "expected_answer")
 
 
 class ExerciseService:
@@ -40,7 +44,9 @@ class ExerciseService:
         self.skills = SkillRepository(session)
         self.images = ImageRepository(session)
         self.exercises = ExerciseRepository(session)
+        self.questions = ExerciseQuestionRepository(session)
         self.options = ExerciseOptionRepository(session)
+        self.package_items = PackageItemRepository(session)
         self.subject_links = ExerciseSubjectRepository(session)
         self.image_links = ExerciseImageRepository(session)
         self.skill_links = ExerciseSkillRepository(session)
@@ -51,7 +57,7 @@ class ExerciseService:
         exercise = await self.exercises.add(
             Exercise(teacher_id=teacher.id, **data.model_dump(include=set(SCALAR_FIELDS)))
         )
-        await self._sync_options(exercise.id, [], data)
+        await self._sync_questions(exercise.id, [], data)
         await self._sync_subjects(exercise.id, [], data)
         await self._sync_skills(exercise.id, [], data)
         await self._sync_images(exercise.id, [], data)
@@ -89,7 +95,7 @@ class ExerciseService:
         for field, value in data.model_dump(include=set(SCALAR_FIELDS)).items():
             setattr(exercise, field, value)
         await self.exercises.save(exercise)
-        await self._sync_options(exercise.id, list(exercise.options), data)
+        await self._sync_questions(exercise.id, list(exercise.questions), data)
         await self._sync_subjects(exercise.id, list(exercise.subject_links), data)
         await self._sync_skills(exercise.id, list(exercise.skill_links), data)
         await self._sync_images(exercise.id, list(exercise.image_links), data)
@@ -128,9 +134,34 @@ class ExerciseService:
         if missing_images:
             raise UnprocessableError(f"Unknown images: {sorted(map(str, missing_images))}")
 
-    async def _sync_options(
-        self, exercise_id: UUID, existing: list[ExerciseOption], data: ExerciseWrite
+    async def _sync_questions(
+        self, exercise_id: UUID, existing: list[ExerciseQuestion], data: ExerciseWrite
     ) -> None:
+        for stale in existing[len(data.questions) :]:
+            for option in stale.options:
+                await self.options.delete(option)
+            await self.questions.delete(stale)
+        for position, question in enumerate(data.questions):
+            fields = question.model_dump(include=set(QUESTION_FIELDS))
+            if position < len(existing):
+                current = existing[position]
+                changed = [key for key, value in fields.items() if getattr(current, key) != value]
+                for key in changed:
+                    setattr(current, key, fields[key])
+                if changed:
+                    await self.questions.save(current)
+                await self._sync_options(current.id, list(current.options), question)
+            else:
+                created = await self.questions.add(
+                    ExerciseQuestion(exercise_id=exercise_id, position=position, **fields)
+                )
+                await self._sync_options(created.id, [], question)
+
+    async def _sync_options(
+        self, question_id: UUID, existing: list[ExerciseOption], data: ExerciseQuestionWrite
+    ) -> None:
+        for stale in existing[len(data.options) :]:
+            await self.options.delete(stale)
         for position, option in enumerate(data.options):
             fields = option.model_dump()
             if position < len(existing):
@@ -142,10 +173,8 @@ class ExerciseService:
                     await self.options.save(current)
             else:
                 await self.options.add(
-                    ExerciseOption(exercise_id=exercise_id, position=position, **fields)
+                    ExerciseOption(question_id=question_id, position=position, **fields)
                 )
-        for stale in existing[len(data.options) :]:
-            await self.options.delete(stale)
 
     async def _sync_subjects(
         self, exercise_id: UUID, existing: list[ExerciseSubject], data: ExerciseWrite
@@ -204,6 +233,11 @@ class ExerciseService:
         await self.exercises.delete(exercise)
 
     async def _delete_children(self, exercise_id: UUID) -> None:
-        for repository in (self.options, self.subject_links, self.image_links, self.skill_links):
+        for question in await self.questions.find_by(exercise_id=exercise_id):
+            for option in await self.options.find_by(question_id=question.id):
+                await self.options.delete(option)
+            await self.questions.delete(question)
+        repositories = (self.subject_links, self.image_links, self.skill_links, self.package_items)
+        for repository in repositories:
             for child in await repository.find_by(exercise_id=exercise_id):
                 await repository.delete(child)

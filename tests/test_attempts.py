@@ -60,8 +60,8 @@ async def test_student_sees_every_exercise_sharing_a_plan_subject(
         scenario.exercises[0]["id"],
         scenario.exercises[1]["id"],
     ]
-    assert "is_correct" not in items[0]["exercise"]["options"][0]
-    assert "expected_answer" not in items[1]["exercise"]
+    assert "is_correct" not in items[0]["exercise"]["questions"][0]["options"][0]
+    assert "expected_answer" not in items[1]["exercise"]["questions"][0]
     assert items[0]["attempts_count"] == 0
     assert items[0]["locked"] is False
     assert geometry.json()["total"] == 1
@@ -87,7 +87,7 @@ async def test_multiple_choice_is_graded_and_attempted_once(
     assert wrong.status_code == 201
     body = wrong.json()
     assert body["is_correct"] is False
-    assert body["correct_option_ids"] == [option_id(exercise, True)]
+    assert body["answers"][0]["correct_option_ids"] == [option_id(exercise, True)]
     assert body["hours"] == 1.5
     assert body["review_status"] == "pending"
     assert again.status_code == 409
@@ -122,7 +122,7 @@ async def test_concurrent_multiple_choice_attempts_allow_only_one(
     responses = await asyncio.gather(
         *(
             attempt(client, scenario, exercise["id"], selected_option_ids=[option["id"]])
-            for option in exercise["options"]
+            for option in exercise["questions"][0]["options"]
         )
     )
     assert sorted(response.status_code for response in responses) == [201, 409]
@@ -143,7 +143,8 @@ async def test_open_answers_can_be_repeated(client: AsyncClient, scenario: Scena
     assert without_hours.status_code == 422
     assert (first.status_code, second.status_code) == (201, 201)
     assert first.json()["is_correct"] is None
-    assert [item["answer_text"] for item in mine.json()["items"]] == ["Squares", "Triangles"]
+    answers = [item["answers"][0]["answer_text"] for item in mine.json()["items"]]
+    assert answers == ["Squares", "Triangles"]
 
 
 @pytest.mark.parametrize(
@@ -177,7 +178,12 @@ async def test_only_students_with_a_plan_attempt(
     exercise_id = scenario.exercises[1]["id"]
     as_teacher = await client.post(
         f"{MY_PLAN_URL}/exercises/{exercise_id}/attempts",
-        json={"answer_text": "x", "spent_hours": 1},
+        json={
+            "answers": [
+                {"question_id": scenario.exercises[1]["questions"][0]["id"], "answer_text": "x"}
+            ],
+            "spent_hours": 1,
+        },
         headers=auth(scenario.teacher_token),
     )
     stranger_token, _ = await register(client, identity, "student-2", "student")
@@ -235,12 +241,12 @@ async def test_progress_counts_attempt_hours_per_subject_and_week(
     choice = scenario.exercises[0]
     open_id = scenario.exercises[1]["id"]
     await attempt(client, scenario, choice["id"], selected_option_ids=[option_id(choice, True)])
-    await attempt(client, scenario, open_id, answer_text="a", spent_hours=3)
+    old = await attempt(client, scenario, open_id, answer_text="a", spent_hours=3)
     await attempt(client, scenario, open_id, answer_text="b", spent_hours=1)
     async with session_factory() as session:
         await session.execute(
             update(ExerciseAttempt)
-            .where(ExerciseAttempt.answer_text == "a")
+            .where(ExerciseAttempt.id == old.json()["id"])
             .values(submitted_at=utc_now() - timedelta(days=7))
         )
         await session.commit()

@@ -138,9 +138,9 @@ async def test_image_in_use_cannot_be_deleted(
     await client.post(
         f"{API}/exercises",
         json={
-            "type": "open_answer",
             "title": "Describe",
             "images": [{"image_id": image["id"]}],
+            "questions": [{"type": "open_answer"}],
         },
         headers=auth(token),
     )

@@ -110,7 +110,11 @@ async def test_deleting_subject_untags_exercises(
     subject = await create_subject(client, token, "Algebra")
     exercise = await client.post(
         f"{API}/exercises",
-        json={"type": "open_answer", "title": "Solve x", "subject_ids": [subject["id"]]},
+        json={
+            "title": "Solve x",
+            "subject_ids": [subject["id"]],
+            "questions": [{"type": "open_answer"}],
+        },
         headers=auth(token),
     )
 

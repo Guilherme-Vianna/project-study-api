@@ -228,7 +228,7 @@ class StudyPlanService:
 
     async def _delete_assignment(self, assignment: StudyPlanAssignment) -> None:
         for attempt in await self.attempts.find_by(assignment_id=assignment.id):
-            await self.attempts.delete(attempt)
+            await self.attempts.delete_with_answers(attempt)
         await self.assignments.delete(assignment)
 
     async def _progress(

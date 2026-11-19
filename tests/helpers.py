@@ -75,18 +75,41 @@ async def create_subject(client: AsyncClient, token: str, name: str) -> str:
     return response.json()["id"]
 
 
+def question_payload(
+    type: str = "multiple_choice",
+    statement: str | None = None,
+    expected_answer: str | None = None,
+    options: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    question: dict[str, Any] = {"type": type}
+    if statement is not None:
+        question["statement"] = statement
+    if type == "multiple_choice":
+        question["options"] = (
+            options if options is not None else [{"text": "3"}, {"text": "4", "is_correct": True}]
+        )
+    elif expected_answer is not None:
+        question["expected_answer"] = expected_answer
+    if options is not None and type != "multiple_choice":
+        question["options"] = options
+    if expected_answer is not None and type == "multiple_choice":
+        question["expected_answer"] = expected_answer
+    return question
+
+
+def exercise_payload(**overrides: Any) -> dict[str, Any]:
+    question_keys = ("type", "expected_answer", "options", "question_statement")
+    question = {key: overrides.pop(key) for key in question_keys if key in overrides}
+    if "question_statement" in question:
+        question["statement"] = question.pop("question_statement")
+    payload = {"title": "What is 2 + 2?", **overrides}
+    payload.setdefault("questions", [question_payload(**question)])
+    return payload
+
+
 async def create_exercise(client: AsyncClient, token: str, **overrides: Any) -> dict[str, Any]:
-    payload = {
-        "type": "multiple_choice",
-        "title": "What is 2 + 2?",
-        "expected_answer": None,
-        "options": [{"text": "3"}, {"text": "4", "is_correct": True}],
-        **overrides,
-    }
-    if payload["type"] == "open_answer":
-        payload.pop("options")
-    elif payload["expected_answer"] is None:
-        payload.pop("expected_answer")
-    response = await client.post(f"{API}/exercises", json=payload, headers=auth(token))
+    response = await client.post(
+        f"{API}/exercises", json=exercise_payload(**overrides), headers=auth(token)
+    )
     assert response.status_code == 201, response.text
     return response.json()

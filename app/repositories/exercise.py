@@ -8,6 +8,7 @@ from app.models.exercise import (
     Exercise,
     ExerciseImage,
     ExerciseOption,
+    ExerciseQuestion,
     ExerciseSkill,
     ExerciseSubject,
     ExerciseType,
@@ -22,7 +23,9 @@ def exercise_aggregate_options(base: Load | None = None) -> tuple[Load, ...]:
         return base.selectinload(attribute) if base is not None else selectinload(attribute)
 
     return (
-        load(Exercise.options).selectinload(ExerciseOption.image),
+        load(Exercise.questions)
+        .selectinload(ExerciseQuestion.options)
+        .selectinload(ExerciseOption.image),
         load(Exercise.subject_links).selectinload(ExerciseSubject.subject),
         load(Exercise.image_links).selectinload(ExerciseImage.image),
         load(Exercise.skill_links).selectinload(ExerciseSkill.skill).selectinload(Skill.group),
@@ -40,6 +43,18 @@ class ExerciseRepository(BaseRepository[Exercise]):
         if not wanted:
             return {}
         stmt = select(Exercise).where(Exercise.teacher_id == teacher_id, Exercise.id.in_(wanted))
+        return {exercise.id: exercise for exercise in await self.session.scalars(stmt)}
+
+    async def aggregates_by_ids(self, ids: Iterable[UUID]) -> dict[UUID, Exercise]:
+        wanted = set(ids)
+        if not wanted:
+            return {}
+        stmt = (
+            select(Exercise)
+            .where(Exercise.id.in_(wanted))
+            .options(*AGGREGATE_OPTIONS)
+            .execution_options(populate_existing=True)
+        )
         return {exercise.id: exercise for exercise in await self.session.scalars(stmt)}
 
     async def get_aggregate(self, exercise_id: UUID, teacher_id: UUID) -> Exercise | None:
@@ -123,7 +138,12 @@ class ExerciseRepository(BaseRepository[Exercise]):
     ) -> T:
         stmt = stmt.where(Exercise.teacher_id == teacher_id)
         if exercise_type is not None:
-            stmt = stmt.where(Exercise.type == exercise_type)
+            stmt = stmt.where(
+                exists().where(
+                    ExerciseQuestion.exercise_id == Exercise.id,
+                    ExerciseQuestion.type == exercise_type,
+                )
+            )
         if subject_id is not None:
             stmt = stmt.where(
                 select(ExerciseSubject.id)
@@ -134,6 +154,10 @@ class ExerciseRepository(BaseRepository[Exercise]):
                 .exists()
             )
         return stmt
+
+
+class ExerciseQuestionRepository(BaseRepository[ExerciseQuestion]):
+    model = ExerciseQuestion
 
 
 class ExerciseOptionRepository(BaseRepository[ExerciseOption]):

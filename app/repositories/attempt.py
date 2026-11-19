@@ -4,10 +4,13 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import exists, func, select
+from sqlalchemy.orm import selectinload
 
-from app.models.attempt import ExerciseAttempt, ReviewStatus
-from app.models.study_plan import StudyPlan, StudyPlanAssignment
+from app.models.attempt import ExerciseAttempt, ExerciseAttemptAnswer, ReviewStatus
+from app.models.exercise import Exercise
 from app.repositories.base import BaseRepository
+
+WITH_ANSWERS = selectinload(ExerciseAttempt.answers)
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +22,7 @@ class AttemptSummary:
 @dataclass(frozen=True, slots=True)
 class AttemptFilters:
     assignment_id: UUID | None = None
+    package_id: UUID | None = None
     student_id: UUID | None = None
     exercise_id: UUID | None = None
     review_status: ReviewStatus | None = None
@@ -27,9 +31,20 @@ class AttemptFilters:
 class AttemptRepository(BaseRepository[ExerciseAttempt]):
     model = ExerciseAttempt
 
+    async def get_with_answers(self, attempt_id: UUID) -> ExerciseAttempt | None:
+        stmt = (
+            select(ExerciseAttempt)
+            .where(ExerciseAttempt.id == attempt_id)
+            .options(WITH_ANSWERS)
+            .execution_options(populate_existing=True)
+        )
+        return await self.session.scalar(stmt)
+
     async def get_for_teacher(self, attempt_id: UUID, teacher_id: UUID) -> ExerciseAttempt | None:
-        stmt = self._for_teacher(select(ExerciseAttempt), teacher_id).where(
-            ExerciseAttempt.id == attempt_id
+        stmt = (
+            self._for_teacher(select(ExerciseAttempt), teacher_id)
+            .where(ExerciseAttempt.id == attempt_id)
+            .options(WITH_ANSWERS)
         )
         return await self.session.scalar(stmt)
 
@@ -40,6 +55,7 @@ class AttemptRepository(BaseRepository[ExerciseAttempt]):
         stmt = (
             self._for_teacher(select(ExerciseAttempt), teacher_id)
             .where(*conditions)
+            .options(WITH_ANSWERS)
             .order_by(ExerciseAttempt.id.desc())
             .offset(offset)
             .limit(limit)
@@ -55,6 +71,7 @@ class AttemptRepository(BaseRepository[ExerciseAttempt]):
         stmt = (
             select(ExerciseAttempt)
             .where(*conditions)
+            .options(WITH_ANSWERS)
             .order_by(ExerciseAttempt.id.desc())
             .offset(offset)
             .limit(limit)
@@ -64,7 +81,7 @@ class AttemptRepository(BaseRepository[ExerciseAttempt]):
         return items, await self.session.scalar(count) or 0
 
     async def summaries(
-        self, assignment_id: UUID, exercise_ids: Iterable[UUID]
+        self, filters: AttemptFilters, exercise_ids: Iterable[UUID]
     ) -> dict[UUID, AttemptSummary]:
         wanted = set(exercise_ids)
         if not wanted:
@@ -75,10 +92,7 @@ class AttemptRepository(BaseRepository[ExerciseAttempt]):
                 func.count(ExerciseAttempt.id),
                 func.max(ExerciseAttempt.submitted_at),
             )
-            .where(
-                ExerciseAttempt.assignment_id == assignment_id,
-                ExerciseAttempt.exercise_id.in_(wanted),
-            )
+            .where(*self._conditions(filters), ExerciseAttempt.exercise_id.in_(wanted))
             .group_by(ExerciseAttempt.exercise_id)
         )
         return {
@@ -90,18 +104,28 @@ class AttemptRepository(BaseRepository[ExerciseAttempt]):
         stmt = select(exists().where(ExerciseAttempt.exercise_id == exercise_id))
         return bool(await self.session.scalar(stmt))
 
+    async def is_package_used(self, package_id: UUID) -> bool:
+        stmt = select(exists().where(ExerciseAttempt.package_id == package_id))
+        return bool(await self.session.scalar(stmt))
+
+    async def delete_with_answers(self, attempt: ExerciseAttempt) -> None:
+        stmt = select(ExerciseAttemptAnswer).where(ExerciseAttemptAnswer.attempt_id == attempt.id)
+        for answer in await self.session.scalars(stmt):
+            await self.session.delete(answer)
+        await self.session.flush()
+        await self.delete(attempt)
+
     @staticmethod
     def _for_teacher(stmt, teacher_id: UUID):
-        return (
-            stmt.join(StudyPlanAssignment, StudyPlanAssignment.id == ExerciseAttempt.assignment_id)
-            .join(StudyPlan, StudyPlan.id == StudyPlanAssignment.plan_id)
-            .where(StudyPlan.teacher_id == teacher_id)
+        return stmt.join(Exercise, Exercise.id == ExerciseAttempt.exercise_id).where(
+            Exercise.teacher_id == teacher_id
         )
 
     @staticmethod
     def _conditions(filters: AttemptFilters) -> list:
         columns = {
             "assignment_id": ExerciseAttempt.assignment_id,
+            "package_id": ExerciseAttempt.package_id,
             "student_id": ExerciseAttempt.student_id,
             "exercise_id": ExerciseAttempt.exercise_id,
             "review_status": ExerciseAttempt.review_status,
@@ -111,3 +135,7 @@ class AttemptRepository(BaseRepository[ExerciseAttempt]):
             for name, column in columns.items()
             if getattr(filters, name) is not None
         ]
+
+
+class AttemptAnswerRepository(BaseRepository[ExerciseAttemptAnswer]):
+    model = ExerciseAttemptAnswer

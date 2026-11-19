@@ -1,10 +1,11 @@
-from app.models.attempt import ExerciseAttempt, ReviewStatus
+from app.models.attempt import ExerciseAttempt, ExerciseAttemptAnswer, ReviewStatus
 from app.models.base import Base
 from app.models.enrollment import Enrollment
 from app.models.exercise import (
     Exercise,
     ExerciseImage,
     ExerciseOption,
+    ExerciseQuestion,
     ExerciseSkill,
     ExerciseSubject,
     ExerciseType,
@@ -13,6 +14,7 @@ from app.models.exercise import (
 from app.models.history import HistoryOperation, versioned
 from app.models.image import Image
 from app.models.invite import TeacherInvite
+from app.models.package import ExercisePackage, ExercisePackageItem, ExercisePackageRelease
 from app.models.question_bank import QuestionBankItem
 from app.models.skill import Skill, SkillGroup, SkillLevel, StudentSkill
 from app.models.student import Student
@@ -25,8 +27,13 @@ __all__ = [
     "Enrollment",
     "Exercise",
     "ExerciseAttempt",
+    "ExerciseAttemptAnswer",
     "ExerciseImage",
     "ExerciseOption",
+    "ExercisePackage",
+    "ExercisePackageItem",
+    "ExercisePackageRelease",
+    "ExerciseQuestion",
     "ExerciseSkill",
     "ExerciseSubject",
     "ExerciseType",

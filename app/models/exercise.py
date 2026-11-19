@@ -44,20 +44,15 @@ class ImagePlacement(StrEnum):
 @versioned
 class Exercise(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "exercises"
-    __table_args__ = (
-        enum_check("type", ExerciseType),
-        CheckConstraint("estimated_hours > 0", name="estimated_hours"),
-    )
+    __table_args__ = (CheckConstraint("estimated_hours > 0", name="estimated_hours"),)
 
     teacher_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("teachers.id"), index=True)
-    type: Mapped[ExerciseType] = mapped_column(string_enum(ExerciseType, 20))
     title: Mapped[str] = mapped_column(String(200))
     statement: Mapped[str | None] = mapped_column(Text)
-    expected_answer: Mapped[str | None] = mapped_column(Text)
     estimated_hours: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
 
-    options: Mapped[list[ExerciseOption]] = relationship(
-        order_by="ExerciseOption.position", viewonly=True, lazy="raise"
+    questions: Mapped[list[ExerciseQuestion]] = relationship(
+        order_by="ExerciseQuestion.position", viewonly=True, lazy="raise"
     )
     subject_links: Mapped[list[ExerciseSubject]] = relationship(
         order_by="ExerciseSubject.id", viewonly=True, lazy="raise"
@@ -69,13 +64,36 @@ class Exercise(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
         order_by="ExerciseSkill.id", viewonly=True, lazy="raise"
     )
 
+    @property
+    def single_attempt(self) -> bool:
+        return any(question.type is ExerciseType.MULTIPLE_CHOICE for question in self.questions)
+
+
+@versioned
+class ExerciseQuestion(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "exercise_questions"
+    __table_args__ = (
+        UniqueConstraint("exercise_id", "position"),
+        enum_check("type", ExerciseType),
+    )
+
+    exercise_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("exercises.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    type: Mapped[ExerciseType] = mapped_column(string_enum(ExerciseType, 20))
+    statement: Mapped[str | None] = mapped_column(Text)
+    expected_answer: Mapped[str | None] = mapped_column(Text)
+
+    options: Mapped[list[ExerciseOption]] = relationship(
+        order_by="ExerciseOption.position", viewonly=True, lazy="raise"
+    )
+
 
 @versioned
 class ExerciseOption(UUIDv7PrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "exercise_options"
-    __table_args__ = (UniqueConstraint("exercise_id", "position"),)
+    __table_args__ = (UniqueConstraint("question_id", "position"),)
 
-    exercise_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("exercises.id"))
+    question_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("exercise_questions.id"))
     position: Mapped[int] = mapped_column(Integer)
     text: Mapped[str | None] = mapped_column(Text)
     is_correct: Mapped[bool] = mapped_column(Boolean)

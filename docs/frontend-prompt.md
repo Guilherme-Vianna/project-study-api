@@ -144,6 +144,34 @@ skill (use the group's levels from `GET /skill-groups`), notes, an "update" acti
 history endpoint. On the student side, a read-only "My skills" page with a progress indicator per skill
 (`level.position + 1` out of the group's level count when known) and the teacher's notes.
 
+## 4. Several questions per exercise and exercise packages (new, breaking)
+
+### Exercises
+- `ExerciseWrite` is now `{title, statement?, estimated_hours?, subject_ids, skill_ids, images, questions[1..50]}`;
+  each question is `{type: "open_answer" | "multiple_choice", statement?, expected_answer?, options[]}` with the old
+  per-type rules. `type`, `expected_answer` and `options` no longer exist on the exercise itself.
+- `ExerciseRead.questions[{id, position, type, statement, expected_answer, options[{id, position, text, is_correct, image}]}]`;
+  students get the same without `expected_answer`/`is_correct`. `?type=` filters exercises having a question of that type.
+
+### Attempts
+- `AttemptCreate` = `{answers: [{question_id, answer_text?, selected_option_ids?}], spent_hours?}`, one answer for
+  every question (422 otherwise). An exercise with any multiple choice question can be attempted once (`locked`, 409).
+- `AttemptRead` = `{id, assignment_id?, package_id?, student_id, exercise_id, single_attempt, is_correct (null when an
+  open question exists), hours, submitted_at, review_status, feedback, reviewed_at, answers[{question_id, position,
+  question_type, answer_text, selected_option_ids, correct_option_ids, is_correct}]}`. `GET /attempts` accepts `package_id`.
+
+### Packages (teacher)
+- `POST|GET /exercise-packages`, `GET|PUT|DELETE /exercise-packages/{id}` with `{title, description?, exercise_ids[]}`
+  (ordered). `PackageRead` = `{id, title, description, exercises[{id, title, estimated_hours, question_count, subjects}],
+  releases[{student_id, first_name, last_name, released_at}], created_at, updated_at}`. Delete → 409 once answered.
+- A package is invisible to students until released: `POST /exercise-packages/{id}/releases {student_ids[]}` (enrolled
+  students only, 404 otherwise) and `DELETE /exercise-packages/{id}/releases/{student_id}` to hide it again.
+
+### Packages (student)
+- `GET /students/me/exercise-packages` → `[{id, teacher_id, title, description, released_at, exercise_count, attempted_exercises}]`.
+- `GET /students/me/exercise-packages/{id}` → the package with `exercises: StudentExerciseRead[]`.
+- `GET .../{id}/exercises/{exercise_id}`, `POST .../{id}/exercises/{exercise_id}/attempts`, `GET .../{id}/attempts?exercise_id=`.
+
 ## Acceptance checklist
 - No code references the removed completion endpoints or plan `exercises`/`allocated_hours`.
 - Plan editor only manages subjects; the student plan page shows `available_exercises` and links to the exercise list.

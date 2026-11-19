@@ -16,8 +16,7 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 
 ## Domain rules
 
-- Firebase Auth is the only user source (no users table; referenced by `firebase_uid`). Credentials: `FIREBASE_CREDENTIALS_BASE64` or `GOOGLE_APPLICATION_CREDENTIALS` (path).
-- After login the client calls `GET /api/v1/me` (uid, email, name, fresh role, profile).
+- Firebase Auth is the only user source (no users table; `firebase_uid`); `GET /api/v1/me` after login. Credentials: `FIREBASE_CREDENTIALS_BASE64` or `GOOGLE_APPLICATION_CREDENTIALS` (path).
 - Role lives in the Firebase claim `role` (`teacher` | `student`); one per user. Registration takes a Postgres advisory
   lock on the uid and checks both profile tables plus the claim. Claim + commit pair in `ProfileService._commit_with_claims`.
 - Teacher/Student share `PersonProfileMixin` (names, `birth_date`, CEP, BR mobile E.164), all nullable; names prefilled
@@ -25,26 +24,27 @@ School REST API (FastAPI), three-layer architecture, PostgreSQL, Firebase Auth, 
 - Enrollment: teacher creates reusable invite links (`teacher_invites`); a registered student previews
   `GET /invites/{token}` and confirms `POST /invites/{token}/accept` (`enrollments`).
 - Content is teacher-owned; other teachers get 404, non-teachers 403 (`services/common.require_teacher`).
-- Subjects: tags, unique name per teacher ignoring case. Exercises: `open_answer` or `multiple_choice` (2-10 options,
-  >= 1 correct), optional `estimated_hours`, subjects via `exercise_subjects`, images via `exercise_images`
-  (`statement` | `attachment`). `PUT /exercises/{id}` syncs children in place. Students never see `is_correct`/`expected_answer`.
+- Subjects: unique name per teacher ignoring case. Exercises: title, optional `statement`/`estimated_hours`, 1-50 `exercise_questions`
+  (`open_answer` | `multiple_choice`: 2-10 `exercise_options`, >= 1 correct), `exercise_subjects`, `exercise_images` (`statement` |
+  `attachment`). `PUT` syncs children in place (questions/options by position). Students never see `is_correct`/`expected_answer`.
 - Images: multipart, type from bytes (PNG/JPEG/GIF/WebP), max `IMAGE_MAX_BYTES`, public bucket object
   `teachers/<teacher_id>/images/<image_id>.<ext>`; GCS written first, removed if the DB write fails; in use → 409.
   Optional config: no `GCS_BUCKET_NAME` → `UnconfiguredImageStorage` (upload 503, `url` null); no `INVITE_BASE_URL` → invite `url` null.
 - Study plans (`study_plans`): teacher templates of subjects with `weekly_hours` + optional `weekdays` (ISO smallint[]);
   students see every teacher exercise sharing a plan subject (live). `study_plan_assignments`: one active per enrolled
   student (partial unique index); ending (DELETE or enrollment end) keeps it and its attempts. Assigned plans are kept.
-- `exercise_attempts` snapshot answer, options, correctness, `hours` (`spent_hours`/`estimated_hours`, else 422); open
-  answers repeat, multiple choice once per assignment (partial unique index). `PUT /attempts/{id}/review` sets status +
-  feedback. Weekly progress (`STUDY_TIMEZONE`) sums attempt hours for each subject of the exercise.
+- `exercise_attempts` (`assignment_id` xor `package_id`) answer every question; `exercise_attempt_answers` snapshot answers and
+  correctness; `hours` = `spent_hours`/`estimated_hours`, else 422. Any multiple choice question → `single_attempt` (partial unique
+  indexes); open-only repeat. `PUT /attempts/{id}/review` sets status + feedback. Weekly progress (`STUDY_TIMEZONE`) sums plan hours.
+- Packages (`exercise_packages` + ordered `exercise_package_items`) are hidden until released per enrolled student (`exercise_package_releases`, revoke sets `revoked_at`); students use `/students/me/exercise-packages/...`.
 - Skills: `skill_groups` own ordered `skill_levels` and `skills` (`PUT` syncs by id); `exercise_skills` tag exercises;
   teachers set enrolled students' `student_skills` level (timeline = history table); students only read them.
-- Delete guards (409): assigned plans, exercises with attempts, subjects in plans, images in exercises, used skills/levels.
+- Delete guards (409): assigned plans, exercises/packages with attempts, subjects in plans, images in exercises, used skills/levels.
 - Question bank (`question_bank_items`; `python -m app.commands.import_question_bank <jsonl>`, upsert by `source_key`). Teachers: `GET .../catalog`, `POST .../generations[/stream]`, `POST .../generations/{id}/adjustments[/stream]` (SSE).
   LangGraph (`services/question_graph.py`): retrieve → generate → verify (malformed, `pg_trgm` ≥ 0.6 vs the bank, or a blind solve by the other model disagrees → rewrite ≤ 2, then discard) → `interrupt` for teacher review (≤ 5 adjustments per question).
   State in `AsyncPostgresSaver` (`integrations/langgraph.py`, `setup()` at startup, tables ignored by Alembic); nothing is saved as an exercise.
   The teacher's skills go in the prompt; drafts return `skill_ids` matched to that teacher's skills only.
-- Unregistering purges the user's plans/assignments/attempts and skills first, then enrollments and content (then GCS objects).
+- Unregistering purges the user's packages/plans/assignments/attempts and skills first, then enrollments and content (then GCS objects).
 
 ## SCD Type 4
 
@@ -62,7 +62,7 @@ app/
   integrations/  firebase.py, gcs.py, redis.py, langchain.py (LLM), langgraph.py; commands/ import_question_bank.py
   api/           deps, pagination (PaginationDep, to_page), health, cache (middleware), v1/endpoints/*
   models/ schemas/ services/ repositories/  one module per resource (profile, teacher, student, enrollment, subject,
-                 image, exercise, study_plan, attempt, skill, ...) + helpers (base, history, types, common, role)
+                 image, exercise, package, study_plan, attempt, skill, ...) + helpers (base, history, types, common, role)
 alembic/         async env.py, versions/ (ruff post-write hooks)
 tests/           conftest, fakes (identity, storage, cache, LLM), helpers, plan_scenario, one module per resource
 docker/          postgres/init (app_test DB), gcs/ (emulator bucket seed)

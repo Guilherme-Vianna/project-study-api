@@ -89,14 +89,25 @@ async def assign(client: AsyncClient, scenario: Scenario, plan_id: str) -> dict:
 
 
 def option_id(exercise: dict[str, Any], correct: bool) -> str:
-    return next(item["id"] for item in exercise["options"] if item["is_correct"] is correct)
+    options = exercise["questions"][0]["options"]
+    return next(item["id"] for item in options if item["is_correct"] is correct)
+
+
+def attempt_payload(exercise: dict[str, Any] | None, payload: dict[str, Any]) -> dict[str, Any]:
+    if "answers" in payload or exercise is None:
+        return payload
+    answer = {
+        key: payload.pop(key) for key in ("answer_text", "selected_option_ids") if key in payload
+    }
+    return {**payload, "answers": [{"question_id": exercise["questions"][0]["id"], **answer}]}
 
 
 async def attempt(
     client: AsyncClient, scenario: Scenario, exercise_id: str, **payload: Any
 ) -> Response:
+    exercise = next((item for item in scenario.exercises if item["id"] == exercise_id), None)
     return await client.post(
         f"{MY_PLAN_URL}/exercises/{exercise_id}/attempts",
-        json=payload,
+        json=attempt_payload(exercise, payload),
         headers=auth(scenario.student_token),
     )

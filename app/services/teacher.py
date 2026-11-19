@@ -8,6 +8,7 @@ from app.repositories.invite import InviteRepository
 from app.repositories.teacher import TeacherRepository
 from app.services.exercise import ExerciseService
 from app.services.image import ImageService
+from app.services.package import PackageService
 from app.services.profile import ProfileService
 from app.services.skill import SkillService
 from app.services.study_plan import StudyPlanService
@@ -33,6 +34,7 @@ class TeacherService(ProfileService[Teacher]):
         invites = InviteRepository(self.session)
         for invite in await invites.find_by(teacher_id=profile.id):
             await invites.delete(invite)
+        await PackageService(self.session).purge_for_teacher(profile.id)
         await ExerciseService(self.session).purge_for_teacher(profile.id)
         await SkillService(self.session).purge_for_teacher(profile.id)
         await SubjectService(self.session).purge_for_teacher(profile.id)

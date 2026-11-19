@@ -20,6 +20,7 @@ from app.services.attempt import AttemptService
 from app.services.enrollment import EnrollmentService
 from app.services.exercise import ExerciseService
 from app.services.image import ImageService
+from app.services.package import PackageService
 from app.services.question_bank import QuestionBankService
 from app.services.skill import SkillService
 from app.services.student import StudentService
@@ -117,6 +118,13 @@ def get_attempt_service(session: AuditedSessionDep) -> AttemptService:
 
 
 AttemptServiceDep = Annotated[AttemptService, Depends(get_attempt_service)]
+
+
+def get_package_service(session: AuditedSessionDep) -> PackageService:
+    return PackageService(session)
+
+
+PackageServiceDep = Annotated[PackageService, Depends(get_package_service)]
 
 
 def get_skill_service(session: AuditedSessionDep) -> SkillService:
